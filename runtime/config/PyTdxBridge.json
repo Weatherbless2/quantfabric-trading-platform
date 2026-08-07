@@ -1,0 +1,60 @@
+{
+  "servers": [
+    {
+      "host": "180.153.18.170",
+      "port": 7709
+    },
+    {
+      "host": "110.41.154.219",
+      "port": 7709
+    },
+    {
+      "host": "119.147.171.206",
+      "port": 7709
+    }
+  ],
+  "connect_timeout": 2.0,
+  "poll_interval": 1.0,
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 19001
+  },
+  "securities": [
+    {
+      "market": 0,
+      "ticker": "300007",
+      "exchange": "SZSE",
+      "name": "汉威科技"
+    },
+    {
+      "market": 0,
+      "ticker": "000001",
+      "exchange": "SZSE",
+      "name": "平安银行"
+    },
+    {
+      "market": 0,
+      "ticker": "000858",
+      "exchange": "SZSE",
+      "name": "五粮液"
+    },
+    {
+      "market": 1,
+      "ticker": "600519",
+      "exchange": "SSE",
+      "name": "贵州茅台"
+    },
+    {
+      "market": 1,
+      "ticker": "601318",
+      "exchange": "SSE",
+      "name": "中国平安"
+    },
+    {
+      "market": 0,
+      "ticker": "300750",
+      "exchange": "SZSE",
+      "name": "宁德时代"
+    }
+  ]
+}

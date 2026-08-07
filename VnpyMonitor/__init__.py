@@ -1,1 +1,1 @@
-"""QuantFabric 的 vn.py 只读监控前端。"""
+"""QuantFabric 的 vn.py 交易前端。"""

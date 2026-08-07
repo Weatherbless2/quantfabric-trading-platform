@@ -1,0 +1,5 @@
+TickerList:
+  - TickerIndex: 0
+    Ticker: IF2209
+    ExchangeID: CFFEX
+    PriceTick: 0.2

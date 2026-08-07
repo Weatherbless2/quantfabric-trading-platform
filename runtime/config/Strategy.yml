@@ -1,0 +1,3 @@
+StrategyList:
+  - EngineID: 1
+    Strategy: TestStrategy

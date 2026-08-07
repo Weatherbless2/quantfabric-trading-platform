@@ -1,0 +1,10 @@
+XWatcherConfig:
+  ServerIP: 127.0.0.1
+  Port: 8001
+  Colo: LocalTest
+  OpenTime: 00:00:00.000
+  CloseTime: 23:59:59.999
+  XServerIP: 127.0.0.1
+  XServerPort: 8000
+  Mount1: /
+  Mount2: /root/projects

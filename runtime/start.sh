@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+runtime_dir="${repo_root}/runtime"
+config_dir="${runtime_dir}/config"
+log_dir="${runtime_dir}/log"
+pid_dir="${runtime_dir}/pids"
+mode=${1:-test}
+
+case "${mode}" in
+    test|real-readonly|real-trade) ;;
+    *)
+        printf 'usage: %s [test|real-readonly|real-trade]\n' "$0" >&2
+        exit 1
+        ;;
+esac
+
+mkdir -p "${runtime_dir}/data" "${log_dir}" "${pid_dir}"
+export APP_LOG_PATH="${log_dir}/"
+
+startup_complete=0
+cleanup_partial_start() {
+    local exit_code=$?
+    if [[ ${exit_code} -ne 0 && ${startup_complete} -eq 0 ]]; then
+        printf 'startup failed; stopping partially started services\n' >&2
+        "${runtime_dir}/stop.sh" || true
+    fi
+}
+trap cleanup_partial_start EXIT
+
+if [[ ! -f "${config_dir}/XServer.db" || ! -f "${config_dir}/XRiskJudge.db" ]]; then
+    printf 'runtime databases are missing; run runtime/prepare.sh first\n' >&2
+    exit 1
+fi
+
+start_component() {
+    local name=$1
+    shift
+    local pid_file="${pid_dir}/${name}.pid"
+
+    if [[ -f "${pid_file}" ]] && kill -0 "$(<"${pid_file}")" 2>/dev/null; then
+        printf '%s is already running (PID %s)\n' "${name}" "$(<"${pid_file}")"
+        return
+    fi
+
+    "$@" >"${log_dir}/${name}.stdout.log" 2>&1 &
+    local component_pid=$!
+    printf '%s\n' "${component_pid}" >"${pid_file}"
+    sleep 1
+    if ! kill -0 "${component_pid}" 2>/dev/null; then
+        printf '%s failed to start; see %s\n' "${name}" "${log_dir}/${name}.stdout.log" >&2
+        exit 1
+    fi
+    printf 'started %-14s PID %s\n' "${name}" "${component_pid}"
+}
+
+wait_for_log() {
+    local name=$1
+    local text=$2
+    local log_file="${log_dir}/${name}.stdout.log"
+    local pid_file="${pid_dir}/${name}.pid"
+
+    for _ in {1..300}; do
+        if grep -Fq -- "${text}" "${log_file}"; then
+            printf 'ready   %-14s %s\n' "${name}" "${text}"
+            return
+        fi
+        if ! kill -0 "$(<"${pid_file}")" 2>/dev/null; then
+            printf '%s exited before becoming ready; see %s\n' "${name}" "${log_file}" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+    printf 'timed out waiting for %s; see %s\n' "${name}" "${log_file}" >&2
+    exit 1
+}
+
+components=(XServer XWatcher XRiskJudge XTrader XMarketCenter XQuant)
+if [[ "${mode}" != "test" ]]; then
+    atp_bridge_args=()
+    if [[ "${mode}" == "real-trade" ]]; then
+        atp_bridge_args+=(--enable-orders)
+    fi
+    start_component ATPBridge "${runtime_dir}/atp-bridge.sh" "${atp_bridge_args[@]}"
+    wait_for_log ATPBridge '"event": "bridge_listening"'
+    start_component PyTdxBridge "${runtime_dir}/pytdx-bridge.sh"
+    wait_for_log PyTdxBridge '"event": "bridge_listening"'
+    components=(ATPBridge PyTdxBridge "${components[@]}")
+fi
+
+start_component XServer \
+    "${repo_root}/build/XServer_0.9.0" -d -f "${config_dir}/XServer.yml"
+start_component XWatcher \
+    "${repo_root}/build/XWatcher_0.6.0" -d -f "${config_dir}/XWatcher.yml"
+start_component XRiskJudge \
+    "${repo_root}/build/XRiskJudge_0.9.3" -d -f "${config_dir}/XRiskJudge.yml"
+wait_for_log XRiskJudge "SHMServer Init RiskServer done"
+if [[ "${mode}" == "test" ]]; then
+    trader_account=188795
+    trader_config="${config_dir}/XTrader.yml"
+    trader_plugin="${repo_root}/build/libTestTrader_0.4.0.so"
+    market_config="${config_dir}/XMarketCenter.yml"
+    market_plugin="${repo_root}/build/libTestMarket_0.2.0.so"
+    quant_config="${config_dir}/XQuant.yml"
+    trader_env=(env)
+else
+    trader_account=610000071840
+    trader_config="${config_dir}/XTraderATP.yml"
+    trader_plugin="${repo_root}/build/libATPTrader_0.1.0.so"
+    market_config="${config_dir}/XMarketCenterPyTdx.yml"
+    market_plugin="${repo_root}/build/libPyTdxMarket_0.1.0.so"
+    quant_config="${config_dir}/XQuantStock.yml"
+    trader_env=(env "QF_ATP_ENABLE_ORDERS=$([[ "${mode}" == "real-trade" ]] && printf 1 || printf 0)")
+fi
+
+start_component XTrader \
+    "${trader_env[@]}" "${repo_root}/build/XTrader_0.9.3" -d -a "${trader_account}" \
+    -f "${trader_config}" -L "${trader_plugin}"
+wait_for_log XTrader "SHMServer Init OrderServer${trader_account} done"
+start_component XMarketCenter \
+    "${repo_root}/build/XMarketCenter_0.9.3" -d \
+    -f "${market_config}" -L "${market_plugin}"
+wait_for_log XMarketCenter "SHMServer Init MarketServer done"
+start_component XQuant \
+    "${repo_root}/build/XQuant_0.1.0" -d -f "${quant_config}"
+
+if [[ "${mode}" != "test" ]]; then
+    vnpy_bridge_args=()
+    if [[ "${mode}" == "real-trade" ]]; then
+        vnpy_bridge_args+=(--enable-orders)
+    fi
+    start_component XVnpyBridge \
+        "${repo_root}/build/XVnpyBridge_0.1.0" "${vnpy_bridge_args[@]}"
+    wait_for_log XVnpyBridge '"event":"bridge_listening"'
+    components+=(XVnpyBridge)
+fi
+
+sleep 2
+for name in "${components[@]}"; do
+    if ! kill -0 "$(<"${pid_dir}/${name}.pid")" 2>/dev/null; then
+        printf '%s exited during startup; see %s\n' "${name}" "${log_dir}/${name}.stdout.log" >&2
+        exit 1
+    fi
+done
+
+startup_complete=1
+trap - EXIT
+printf 'QuantFabric services are running in %s mode. Logs: %s\n' "${mode}" "${log_dir}"

@@ -1,30 +1,30 @@
 [submodule "XWatcher"]
 	path = XWatcher
-	url = git@github.com:QuantFabric/XWatcher.git
+	url = https://github.com/QuantFabric/XWatcher.git
 [submodule "XTrader"]
 	path = XTrader
-	url = git@github.com:QuantFabric/XTrader.git
+	url = https://github.com/QuantFabric/XTrader.git
 [submodule "XServer"]
 	path = XServer
-	url = git@github.com:QuantFabric/XServer.git
+	url = https://github.com/QuantFabric/XServer.git
 [submodule "XRiskJudge"]
 	path = XRiskJudge
-	url = git@github.com:QuantFabric/XRiskJudge.git
+	url = https://github.com/QuantFabric/XRiskJudge.git
 [submodule "XMonitor"]
 	path = XMonitor
-	url = git@github.com:QuantFabric/XMonitor.git
+	url = https://github.com/QuantFabric/XMonitor.git
 [submodule "XMarketCenter"]
 	path = XMarketCenter
-	url = git@github.com:QuantFabric/XMarketCenter.git
+	url = https://github.com/QuantFabric/XMarketCenter.git
 [submodule "XAPI"]
 	path = XAPI
-	url = git@github.com:QuantFabric/XAPI.git
+	url = https://github.com/QuantFabric/XAPI.git
 [submodule "Utils"]
 	path = Utils
-	url = git@github.com:QuantFabric/Utils.git
+	url = https://github.com/QuantFabric/Utils.git
 [submodule "SHMServer"]
 	path = SHMServer
-	url = git@github.com:QuantFabric/SHMServer.git
+	url = https://github.com/QuantFabric/SHMServer.git
 [submodule "XQuant"]
 	path = XQuant
-	url = git@github.com:QuantFabric/XQuant.git
+	url = https://github.com/QuantFabric/XQuant.git

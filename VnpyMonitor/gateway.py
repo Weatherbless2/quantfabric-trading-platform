@@ -143,7 +143,7 @@ class JsonLineConnection:
 
 
 class QuantFabricGateway(BaseGateway):
-    """vn.py 网关：当前版本只查询和展示，不开放交易动作。"""
+    """连接行情、账户查询和经过 C++ 风控的交易控制桥。"""
 
     default_name = GATEWAY_NAME
     exchanges = [Exchange.SSE, Exchange.SZSE]
@@ -152,6 +152,8 @@ class QuantFabricGateway(BaseGateway):
         "行情端口": 19001,
         "交易地址": "127.0.0.1",
         "交易端口": 19002,
+        "控制地址": "127.0.0.1",
+        "控制端口": 19003,
         "资金账号": "610000071840",
     }
 
@@ -160,7 +162,12 @@ class QuantFabricGateway(BaseGateway):
         self.account_id = "610000071840"
         self.market_connection: JsonLineConnection | None = None
         self.trade_connection: JsonLineConnection | None = None
+        self.control_connection: JsonLineConnection | None = None
         self.contracts: set[str] = set()
+        self.orders_enabled = False
+        self.order_token = 0
+        self.order_refs: dict[str, str] = {}
+        self.pending_order_tokens: set[str] = set()
 
     def connect(self, setting: dict) -> None:
         if self.market_connection or self.trade_connection:
@@ -181,26 +188,79 @@ class QuantFabricGateway(BaseGateway):
             self._on_connection_state,
             self._on_trade_connected,
         )
+        self.control_connection = JsonLineConnection(
+            "交易控制",
+            str(setting.get("控制地址", "127.0.0.1")),
+            int(setting.get("控制端口", 19003)),
+            self._on_control_message,
+            self._on_connection_state,
+            lambda connection: connection.send({"type": "status"}),
+        )
         self.market_connection.start()
         self.trade_connection.start()
-        self.write_log("只读网关已启动：委托和撤单接口保持禁用")
+        self.control_connection.start()
+        self.write_log("网关已启动：交易请求固定经过 XServer 和 C++ 风控")
 
     def close(self) -> None:
-        for connection in (self.market_connection, self.trade_connection):
+        for connection in (self.market_connection, self.trade_connection, self.control_connection):
             if connection:
                 connection.stop()
         self.market_connection = None
         self.trade_connection = None
+        self.control_connection = None
 
     def subscribe(self, req: SubscribeRequest) -> None:
         self.write_log(f"行情由 QuantFabric 配置订阅：{req.vt_symbol}")
 
     def send_order(self, req: OrderRequest) -> str:
-        self.write_log("只读模式禁止发送委托")
-        return ""
+        if not self.orders_enabled or not self.control_connection:
+            self.write_log("交易控制未就绪，委托未发送")
+            return ""
+        if req.type is not OrderType.LIMIT or req.direction not in (Direction.LONG, Direction.SHORT):
+            self.write_log("当前仅支持普通股票限价买入和卖出")
+            return ""
+        volume = int(req.volume)
+        if req.price <= 0 or volume <= 0 or volume % 100:
+            self.write_log("价格必须大于 0，数量必须是 100 股的整数倍")
+            return ""
+
+        self.order_token += 1
+        orderid = str(self.order_token)
+        command = {
+            "type": "order",
+            "ticker": req.symbol,
+            "exchange": req.exchange.value,
+            "direction": 1 if req.direction is Direction.LONG else 2,
+            "price": req.price,
+            "volume": volume,
+            "order_token": self.order_token,
+        }
+        if not self.control_connection.send(command):
+            self.write_log("交易控制连接已断开，委托未发送")
+            return ""
+        self.pending_order_tokens.add(orderid)
+        order = req.create_order_data(orderid, self.gateway_name)
+        self.on_order(order)
+        self.write_log(f"委托已提交 C++ 风控：{req.symbol} {req.price} x {volume}")
+        return order.vt_orderid
 
     def cancel_order(self, req: CancelRequest) -> None:
-        self.write_log("只读模式禁止撤单")
+        if not self.orders_enabled or not self.control_connection:
+            self.write_log("交易控制未就绪，撤单未发送")
+            return
+        if req.orderid in self.pending_order_tokens:
+            self.write_log("委托尚未取得 ATP 委托号，请稍后再撤")
+            return
+        order_ref = self.order_refs.get(req.orderid, req.orderid)
+        command = {
+            "type": "cancel",
+            "order_ref": order_ref,
+            "exchange": req.exchange.value,
+        }
+        if self.control_connection.send(command):
+            self.write_log(f"撤单已提交 C++ 风控：{order_ref}")
+        else:
+            self.write_log("交易控制连接已断开，撤单未发送")
 
     def query_account(self) -> None:
         self._send_query("fund")
@@ -220,6 +280,8 @@ class QuantFabricGateway(BaseGateway):
         self.query_all()
 
     def _on_connection_state(self, name: str, connected: bool, detail: str) -> None:
+        if name == "交易控制" and not connected:
+            self.orders_enabled = False
         self.on_event(EVENT_QF_CONNECTION, {
             "name": name,
             "connected": connected,
@@ -228,6 +290,30 @@ class QuantFabricGateway(BaseGateway):
         })
         state = "已连接" if connected else "已断开"
         self.write_log(f"{name}{state}：{detail}")
+
+    def _on_control_message(self, message: dict) -> None:
+        message_type = message.get("type")
+        if message_type == "control_status":
+            xserver_connected = bool(message.get("xserver_connected"))
+            orders_enabled = bool(message.get("orders_enabled"))
+            self.orders_enabled = xserver_connected and orders_enabled
+            if self.orders_enabled:
+                detail = "C++风控已启用"
+            elif not orders_enabled:
+                detail = "交易开关未开启"
+            else:
+                detail = "C++中间层尚未登录"
+            self.on_event(EVENT_QF_CONNECTION, {
+                "name": "交易控制",
+                "connected": self.orders_enabled,
+                "detail": detail,
+                "time": datetime.now(),
+            })
+            self.write_log(f"交易控制状态：{detail}")
+        elif message_type == "command_ack":
+            self.write_log(f"C++中间层已接收{message.get('command', '')}请求")
+        elif message_type == "command_error":
+            self.write_log(f"交易控制拒绝请求：{message.get('error', '未知错误')}")
 
     def _on_market_message(self, message: dict) -> None:
         if message.get("type") != "stock_quote":
@@ -243,7 +329,7 @@ class QuantFabricGateway(BaseGateway):
                 gateway_name=self.gateway_name,
                 symbol=symbol,
                 exchange=exchange,
-                name=symbol,
+                name=str(message.get("name", symbol)),
                 product=Product.EQUITY,
                 size=1,
                 pricetick=0.01,
@@ -268,7 +354,7 @@ class QuantFabricGateway(BaseGateway):
             symbol=symbol,
             exchange=exchange,
             datetime=tick_time,
-            name=symbol,
+            name=str(message.get("name", symbol)),
             last_price=float(message.get("last_price", 0) or 0),
             volume=float(message.get("volume", 0) or 0),
             turnover=float(message.get("turnover", 0) or 0),
@@ -329,11 +415,16 @@ class QuantFabricGateway(BaseGateway):
             "rejected": Status.REJECTED,
         }
         side = int(message.get("side", 0) or 0)
+        order_token = str(message.get("order_token") or "").strip()
+        order_ref = str(message.get("order_ref") or message.get("order_sys_id") or "-").strip()
+        if order_token and order_ref != "-":
+            self.order_refs[order_token] = order_ref
+            self.pending_order_tokens.discard(order_token)
         return OrderData(
             gateway_name=self.gateway_name,
             symbol=str(message.get("ticker", "")).strip(),
             exchange=map_exchange(message.get("exchange", "")),
-            orderid=str(message.get("order_ref") or message.get("order_sys_id") or "-").strip(),
+            orderid=order_token or order_ref,
             type=OrderType.LIMIT,
             direction=Direction.LONG if side == 1 else Direction.SHORT,
             price=float(message.get("price", 0) or 0),

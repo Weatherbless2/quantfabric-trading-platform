@@ -1,0 +1,10 @@
+XServerConfig:
+  ServerIP: 127.0.0.1
+  Port: 8000
+  OpenTime: 00:00:00.000
+  CloseTime: 23:59:59.999
+  SnapShot: false
+  BinPath: /root/projects/quantfabric-study/QuantFabric/runtime/data
+  UserDBPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/XServer.db
+  AppCheckTime: 23:58:00.000
+  AppStatusStoreTime: 23:59:00.000

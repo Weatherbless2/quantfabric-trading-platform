@@ -4,3 +4,11 @@
 /relase/
 /debug/
 *.log
+__pycache__/
+*.py[cod]
+.venv/
+.vnpy-venv/
+/VnpyMonitor/screenshots/
+/AtpTraderOfGuosen(1)/data/
+/AtpTraderOfGuosen(1)/log/
+/pytdx/**/__pycache__/

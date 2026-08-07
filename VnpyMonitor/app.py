@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""启动 QuantFabric vn.py 只读交易工作台。"""
+"""启动 QuantFabric vn.py 交易工作台。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from VnpyMonitor.ui import STYLE, WorkbenchWindow
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="QuantFabric vn.py 只读交易工作台")
+    parser = argparse.ArgumentParser(description="QuantFabric vn.py 交易工作台")
     parser.add_argument("--screenshot", type=Path, help="启动后保存界面截图并退出")
     parser.add_argument("--screenshot-delay", type=int, default=5000, help="截图等待毫秒数")
     args = parser.parse_args()

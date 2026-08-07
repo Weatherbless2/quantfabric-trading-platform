@@ -1,0 +1,22 @@
+{
+  "agw": {
+    "user": "agw1shenztianluanshenf",
+    "password": "agw1@shenztianluanshenf",
+    "locations": [
+      "61.142.2.102:32208"
+    ],
+    "ssl": false
+  },
+  "account": {
+    "customer_id": "610000071840",
+    "fund_account_id": "610000071840",
+    "branch_id": "6100",
+    "shenzhen_account_id": "0233005158",
+    "shanghai_account_id": "A112307649",
+    "encrypted_password": "qQ56m+dZOESs024m5vhmVw=="
+  },
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 19002
+  }
+}

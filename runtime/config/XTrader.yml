@@ -1,0 +1,23 @@
+XTraderConfig:
+  Product: Test
+  Broker: Test
+  BrokerID: 9999
+  Account: 188795
+  Password: test
+  BusinessType: 3
+  CloseToday: true
+  AppID: test
+  AuthCode: test
+  ServerIP: 127.0.0.1
+  Port: 8001
+  OpenTime: 00:00:00.000
+  CloseTime: 23:59:59.999
+  QryFund: true
+  CancelAll: false
+  CPUSET: -1, -1
+  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerList.yml
+  ErrorPath: /root/projects/quantfabric-study/QuantFabric/XTrader/Config/CTPError.yml
+  RiskServerName: RiskServer
+  OrderServerName: OrderServer
+  TraderAPI: Test
+  TraderAPIConfig: /root/projects/quantfabric-study/QuantFabric/runtime/config/XTrader.yml
