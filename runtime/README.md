@@ -14,8 +14,9 @@ authorization service. The production desktop applications are C++ Qt clients:
 - `pytdx` and ATP remain external market/broker adapters. They are provider
   integrations, not an application-level Python/C++ client layer.
 
-The existing `XMonitor` C++ GUI is the reference client for the future
-`QtTrader` implementation.
+The existing `XMonitor` C++ GUI is currently built as `QtTrader_0.1.0` while
+its pages are migrated. Its login now obtains a short session from
+`AuthAdminService` before opening the native PackMessage connection.
 
 ## First-time Setup
 
