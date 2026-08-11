@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: quantfabric_auth
+      POSTGRES_USER: quantfabric_auth
+      POSTGRES_PASSWORD: ${QF_POSTGRES_PASSWORD:?set QF_POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quantfabric_auth -d quantfabric_auth"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - quantfabric-auth-postgres:/var/lib/postgresql/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${QF_KEYCLOAK_ADMIN_USERNAME:?set QF_KEYCLOAK_ADMIN_USERNAME in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${QF_KEYCLOAK_ADMIN_PASSWORD:?set QF_KEYCLOAK_ADMIN_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - ./AuthAdminService/keycloak:/opt/keycloak/data/import:ro
+
+  auth-migrate:
+    build:
+      context: .
+      dockerfile: AuthAdminService/Dockerfile
+    env_file: .env
+    environment:
+      QF_AUTH_DATABASE_URL: postgresql+psycopg://quantfabric_auth:${QF_POSTGRES_PASSWORD}@postgres:5432/quantfabric_auth
+    command: ["python", "-m", "AuthAdminService.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  auth-admin:
+    build:
+      context: .
+      dockerfile: AuthAdminService/Dockerfile
+    env_file: .env
+    environment:
+      QF_AUTH_DATABASE_URL: postgresql+psycopg://quantfabric_auth:${QF_POSTGRES_PASSWORD}@postgres:5432/quantfabric_auth
+      QF_OIDC_ISSUER: http://keycloak:8080/realms/quantfabric
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:18080:18080"
+
+volumes:
+  quantfabric-auth-postgres:

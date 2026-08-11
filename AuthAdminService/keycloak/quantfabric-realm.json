@@ -1,0 +1,27 @@
+{
+  "realm": "quantfabric",
+  "enabled": true,
+  "displayName": "QuantFabric",
+  "sslRequired": "external",
+  "roles": {
+    "realm": [
+      {"name": "trader"},
+      {"name": "risk"},
+      {"name": "auditor"},
+      {"name": "admin"}
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "quantfabric-desktop",
+      "name": "QuantFabric Qt Desktop",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://127.0.0.1/*"],
+      "webOrigins": ["http://127.0.0.1"],
+      "attributes": {"pkce.code.challenge.method": "S256"}
+    }
+  ]
+}
