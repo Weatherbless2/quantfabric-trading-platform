@@ -61,6 +61,19 @@ Start the safe local test chain first:
 The script starts `AuthAdmin`, `XServer`, `XWatcher`, `XRiskJudge`, `XTrader`,
 `XMarketCenter`, and `XQuant`. `AuthAdmin` listens on `127.0.0.1:18080`.
 
+Start the desktop programs from separate terminals after the test chain is
+ready:
+
+```bash
+./build/QtAdmin_0.1.0
+
+APP_LOG_PATH="$PWD/runtime/log/" \
+    ./XMonitor/build/QtTrader_0.1.0 -f runtime/config/XMonitor.yml
+```
+
+`APP_LOG_PATH` is required because the legacy QtTrader executable otherwise
+writes to a relative `./log/` directory that may not exist.
+
 Stop all runtime processes with:
 
 ```bash
