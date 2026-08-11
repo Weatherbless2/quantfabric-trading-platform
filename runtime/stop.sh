@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 pid_dir="${repo_root}/runtime/pids"
-components=(XVnpyBridge XQuant XMarketCenter XTrader XRiskJudge XWatcher XServer PyTdxBridge ATPBridge)
+components=(XQuant XMarketCenter XTrader XRiskJudge XWatcher XServer AuthAdmin PyTdxBridge ATPBridge)
+rm -f "${pid_dir}/XVnpyBridge.pid"
 
 for name in "${components[@]}"; do
     pid_file="${pid_dir}/${name}.pid"

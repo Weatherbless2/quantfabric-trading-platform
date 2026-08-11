@@ -15,4 +15,23 @@ SET Plugins='Market|OrderManager|EventLog|Monitor|RiskJudge|FutureAnalysis|Stock
 WHERE UserName='admin';
 SQL
 
+auth_env="${config_dir}/AuthAdmin.env"
+if [[ ! -f "${auth_env}" ]]; then
+    # This file is local runtime state and is ignored by Git. XServer and the
+    # authorization service must share this key; it is never stored in source.
+    auth_key=$(od -An -N 32 -tx1 /dev/urandom | tr -d ' \n')
+    umask 077
+    cat >"${auth_env}" <<EOF
+QF_AUTH_DATABASE_URL=sqlite:///${repo_root}/runtime/data/auth_admin.db
+QF_AUTH_INTERNAL_KEY=${auth_key}
+QF_AUTH_MODE=development
+QF_AUTH_DEFAULT_DOMAIN=desk:cn_equity
+QF_AUTH_SESSION_TTL_SECONDS=900
+QF_AUTH_DEV_ADMIN_USERNAME=admin
+QF_AUTH_DEV_ADMIN_PASSWORD=123456
+QF_AUTH_DEV_ACCOUNT=610000071840
+EOF
+fi
+chmod 600 "${auth_env}"
+
 printf 'runtime configuration prepared in %s\n' "${config_dir}"

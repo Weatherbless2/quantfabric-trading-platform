@@ -35,6 +35,7 @@ def main() -> int:
     window = WorkbenchWindow(main_engine, event_engine)
     window.show()
     main_engine.connect(QuantFabricGateway.default_setting.copy(), GATEWAY_NAME)
+    window.subscribe_selected()
 
     if args.screenshot:
         def capture() -> None:

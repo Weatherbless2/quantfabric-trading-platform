@@ -1,14 +1,20 @@
-"""将 QuantFabric 本机 JSON 桥映射为 vn.py 标准数据对象。"""
+"""QuantFabric 的 vn.py 网关。
+
+界面只负责 vn.py 标准对象和事件分发；网络会话由 quantfabric_native
+直接调用 XServer 的 PackMessage 二进制协议，订单仍经过 C++ 风控链路。
+"""
 
 from __future__ import annotations
 
 import json
-import socket
-import threading
+import sys
 import time
 from datetime import datetime
-from typing import Callable
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
+from vnpy.event import EVENT_TIMER
 from vnpy.trader.constant import Direction, Exchange, OrderType, Product, Status
 from vnpy.trader.gateway import BaseGateway
 from vnpy.trader.object import (
@@ -23,12 +29,82 @@ from vnpy.trader.object import (
 )
 
 
+def _load_native_client():
+    """优先加载构建目录中的本机模块，避免复制或启动额外的桥进程。"""
+    try:
+        from quantfabric_native import QuantFabricClient
+        return QuantFabricClient
+    except ImportError:
+        build_dir = Path(__file__).resolve().parents[1] / "build"
+        if str(build_dir) not in sys.path:
+            sys.path.insert(0, str(build_dir))
+        from quantfabric_native import QuantFabricClient
+        return QuantFabricClient
+
+
+QuantFabricClient = _load_native_client()
 EVENT_QF_CONNECTION = "eQuantFabricConnection"
 GATEWAY_NAME = "QUANTFABRIC"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SECURITY_MASTER_PATH = REPO_ROOT / "runtime" / "data" / "security_master.json"
+AUTH_SESSION_ID_LENGTH = 30
+
+
+def create_auth_session(service_url: str, username: str, password: str,
+                        oidc_access_token: str = "") -> str:
+    """用桌面凭据或现有 OIDC access token 换取 XServer 可承载的短会话。"""
+    base_url = service_url.rstrip("/")
+    if not base_url:
+        raise RuntimeError("认证服务地址不能为空")
+    if oidc_access_token.strip():
+        endpoint = "/v1/sessions/oidc"
+        payload = {"access_token": oidc_access_token.strip()}
+    else:
+        endpoint = "/v1/sessions/development"
+        payload = {"username": username, "password": password}
+    request = Request(
+        base_url + endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"认证服务拒绝登录（HTTP {exc.code}）：{detail}") from exc
+    except (URLError, OSError, ValueError) as exc:
+        raise RuntimeError(f"认证服务不可用：{exc}") from exc
+    session_id = data.get("session_id") if isinstance(data, dict) else None
+    if not isinstance(session_id, str) or len(session_id) != AUTH_SESSION_ID_LENGTH:
+        raise RuntimeError("认证服务返回了无效会话")
+    return session_id
+
+
+def order_trace_id(account: str, order_token: str | int, order_ref: str = "") -> str:
+    """生成与 C++ 日志一致的订单关联标识。"""
+    token = str(order_token or "").strip()
+    if token and token != "0":
+        return f"QF-{account}-{token}"
+    return f"QF-{account}-REF-{order_ref or 'UNKNOWN'}"
+
+
+def load_security_master() -> list[dict]:
+    """加载行情适配器生成的证券主数据；服务未启动时退回默认观察列表。"""
+    paths = [SECURITY_MASTER_PATH, REPO_ROOT / "runtime" / "config" / "PyTdxBridge.json"]
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        securities = data if isinstance(data, list) else data.get("securities", [])
+        if securities:
+            return securities
+    return []
 
 
 def map_exchange(value: str) -> Exchange:
-    """统一桥接层和 vn.py 的交易所代码。"""
     aliases = {
         "SH": Exchange.SSE,
         "SSE": Exchange.SSE,
@@ -38,186 +114,119 @@ def map_exchange(value: str) -> Exchange:
     return aliases.get(str(value).strip().upper(), Exchange.LOCAL)
 
 
-class JsonLineConnection:
-    """带自动重连的本机 JSON 行客户端。"""
-
-    def __init__(
-        self,
-        name: str,
-        host: str,
-        port: int,
-        on_message: Callable[[dict], None],
-        on_state: Callable[[str, bool, str], None],
-        on_connected: Callable[["JsonLineConnection"], None] | None = None,
-    ) -> None:
-        self.name = name
-        self.host = host
-        self.port = port
-        self.on_message = on_message
-        self.on_state = on_state
-        self.on_connected = on_connected
-        self._active = threading.Event()
-        self._socket: socket.socket | None = None
-        self._socket_lock = threading.Lock()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        if self._active.is_set():
-            return
-        self._active.set()
-        self._thread = threading.Thread(
-            target=self._run,
-            name=f"qf-{self.name}-reader",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._active.clear()
-        with self._socket_lock:
-            sock = self._socket
-            self._socket = None
-        if sock:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            sock.close()
-        if self._thread and self._thread is not threading.current_thread():
-            self._thread.join(timeout=3)
-
-    def send(self, message: dict) -> bool:
-        payload = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
-        with self._socket_lock:
-            sock = self._socket
-            if not sock:
-                return False
-            try:
-                sock.sendall(payload)
-                return True
-            except OSError:
-                return False
-
-    def _run(self) -> None:
-        while self._active.is_set():
-            try:
-                sock = socket.create_connection((self.host, self.port), timeout=3)
-                sock.settimeout(1)
-                with self._socket_lock:
-                    self._socket = sock
-                self.on_state(self.name, True, f"{self.host}:{self.port}")
-                if self.on_connected:
-                    self.on_connected(self)
-                self._read(sock)
-            except OSError as exc:
-                if self._active.is_set():
-                    self.on_state(self.name, False, str(exc))
-            finally:
-                with self._socket_lock:
-                    sock = self._socket
-                    self._socket = None
-                if sock:
-                    sock.close()
-            # Event.wait() returns immediately while the event is set; use a
-            # bounded sleep here so an unavailable bridge cannot cause a busy loop.
-            time.sleep(2)
-
-    def _read(self, sock: socket.socket) -> None:
-        buffer = b""
-        while self._active.is_set():
-            try:
-                block = sock.recv(65536)
-            except socket.timeout:
-                continue
-            if not block:
-                raise ConnectionError("连接已关闭")
-            buffer += block
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                if not line.strip():
-                    continue
-                try:
-                    self.on_message(json.loads(line.decode("utf-8")))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    self.on_state(self.name, False, f"消息格式错误: {exc}")
-
-
 class QuantFabricGateway(BaseGateway):
-    """连接行情、账户查询和经过 C++ 风控的交易控制桥。"""
+    """把 C++ PackMessage 事件映射为 vn.py 标准行情和交易对象。"""
 
     default_name = GATEWAY_NAME
     exchanges = [Exchange.SSE, Exchange.SZSE]
     default_setting = {
-        "行情地址": "127.0.0.1",
-        "行情端口": 19001,
-        "交易地址": "127.0.0.1",
-        "交易端口": 19002,
-        "控制地址": "127.0.0.1",
-        "控制端口": 19003,
+        "XServer地址": "127.0.0.1",
+        "XServer端口": 8000,
+        "用户": "admin",
+        "密码": "123456",
+        "交易机房": "LocalTest",
+        "交易产品": "ATPTest",
         "资金账号": "610000071840",
+        "认证服务地址": "http://127.0.0.1:18080",
+        "OIDC访问令牌": "",
     }
 
     def __init__(self, event_engine, gateway_name: str) -> None:
         super().__init__(event_engine, gateway_name)
-        self.account_id = "610000071840"
-        self.market_connection: JsonLineConnection | None = None
-        self.trade_connection: JsonLineConnection | None = None
-        self.control_connection: JsonLineConnection | None = None
+        self.account_id = self.default_setting["资金账号"]
+        self.native_client = None
         self.contracts: set[str] = set()
         self.orders_enabled = False
         self.order_token = 0
         self.order_refs: dict[str, str] = {}
         self.pending_order_tokens: set[str] = set()
+        self.security_master = load_security_master()
+        self.security_names = {
+            f"{item['ticker']}.{item['exchange']}": item.get("name", item["ticker"])
+            for item in self.security_master
+        }
+        self.requested_subscriptions: dict[str, SubscribeRequest] = {}
+        self.sent_subscriptions: set[str] = set()
+        self._last_session_state = (False, False)
+        self._next_login_at = 0.0
+        self._next_session_refresh_at = 0.0
+        self._next_auth_retry_at = 0.0
+        self._connection_setting: dict | None = None
 
     def connect(self, setting: dict) -> None:
-        if self.market_connection or self.trade_connection:
+        if self.native_client:
             return
         self.account_id = str(setting.get("资金账号", self.account_id))
-        self.market_connection = JsonLineConnection(
-            "行情桥",
-            str(setting.get("行情地址", "127.0.0.1")),
-            int(setting.get("行情端口", 19001)),
-            self._on_market_message,
-            self._on_connection_state,
+        self._connection_setting = dict(setting)
+        self.event_engine.register(EVENT_TIMER, self._on_timer)
+        self._open_authenticated_connection()
+        self._publish_contracts()
+        self._publish_connection_state()
+
+    def _open_authenticated_connection(self) -> None:
+        if not self._connection_setting:
+            return
+        setting = self._connection_setting
+        try:
+            session_id = create_auth_session(
+                str(setting.get("认证服务地址", self.default_setting["认证服务地址"])),
+                str(setting.get("用户", "admin")),
+                str(setting.get("密码", "")),
+                str(setting.get("OIDC访问令牌", "")),
+            )
+        except RuntimeError as exc:
+            self._next_auth_retry_at = time.monotonic() + 15.0
+            self.write_log(f"认证会话创建失败：{exc}")
+            return
+
+        previous_client = self.native_client
+        if previous_client:
+            previous_client.stop()
+        self.native_client = QuantFabricClient(
+            str(setting.get("XServer地址", "127.0.0.1")),
+            int(setting.get("XServer端口", 8000)),
+            str(setting.get("用户", "admin")),
+            str(setting.get("密码", "123456")),
+            session_id,
+            str(setting.get("交易机房", "LocalTest")),
+            str(setting.get("交易产品", "ATPTest")),
+            self.account_id,
         )
-        self.trade_connection = JsonLineConnection(
-            "ATP交易桥",
-            str(setting.get("交易地址", "127.0.0.1")),
-            int(setting.get("交易端口", 19002)),
-            self._on_trade_message,
-            self._on_connection_state,
-            self._on_trade_connected,
-        )
-        self.control_connection = JsonLineConnection(
-            "交易控制",
-            str(setting.get("控制地址", "127.0.0.1")),
-            int(setting.get("控制端口", 19003)),
-            self._on_control_message,
-            self._on_connection_state,
-            lambda connection: connection.send({"type": "status"}),
-        )
-        self.market_connection.start()
-        self.trade_connection.start()
-        self.control_connection.start()
-        self.write_log("网关已启动：交易请求固定经过 XServer 和 C++ 风控")
+        if not self.native_client.start():
+            self.write_log(f"XServer 连接失败：{self.native_client.last_error}")
+        else:
+            # The auth session is deliberately renewed before its 15-minute
+            # server lifetime ends, which keeps a running desktop usable.
+            self._next_session_refresh_at = time.monotonic() + 600.0
+            self._next_auth_retry_at = 0.0
+            self.sent_subscriptions.clear()
+            self.write_log("已启动已鉴权 C++ 原生会话：vn.py -> PackMessage -> XServer")
 
     def close(self) -> None:
-        for connection in (self.market_connection, self.trade_connection, self.control_connection):
-            if connection:
-                connection.stop()
-        self.market_connection = None
-        self.trade_connection = None
-        self.control_connection = None
+        self.event_engine.unregister(EVENT_TIMER, self._on_timer)
+        if self.native_client:
+            self.native_client.stop()
+        self.native_client = None
+        self._connection_setting = None
+        self.orders_enabled = False
+        self._publish_connection_state()
 
     def subscribe(self, req: SubscribeRequest) -> None:
-        self.write_log(f"行情由 QuantFabric 配置订阅：{req.vt_symbol}")
+        if req.exchange not in self.exchanges or req.vt_symbol not in self.security_names:
+            self.write_log(f"证券主数据中不存在：{req.vt_symbol}")
+            return
+        self.requested_subscriptions[req.vt_symbol] = req
+        self._flush_subscriptions()
 
     def send_order(self, req: OrderRequest) -> str:
-        if not self.orders_enabled or not self.control_connection:
-            self.write_log("交易控制未就绪，委托未发送")
+        if not self.orders_enabled or not self.native_client:
+            self.write_log("C++ 风控会话未就绪，委托未发送")
             return ""
         if req.type is not OrderType.LIMIT or req.direction not in (Direction.LONG, Direction.SHORT):
             self.write_log("当前仅支持普通股票限价买入和卖出")
+            return ""
+        if req.vt_symbol not in self.security_names:
+            self.write_log(f"证券主数据中不存在，委托未发送：{req.vt_symbol}")
             return ""
         volume = int(req.volume)
         if req.price <= 0 or volume <= 0 or volume % 100:
@@ -226,135 +235,187 @@ class QuantFabricGateway(BaseGateway):
 
         self.order_token += 1
         orderid = str(self.order_token)
-        command = {
-            "type": "order",
-            "ticker": req.symbol,
-            "exchange": req.exchange.value,
-            "direction": 1 if req.direction is Direction.LONG else 2,
-            "price": req.price,
-            "volume": volume,
-            "order_token": self.order_token,
-        }
-        if not self.control_connection.send(command):
-            self.write_log("交易控制连接已断开，委托未发送")
+        sent = self.native_client.send_order(
+            req.symbol,
+            req.exchange.value,
+            1 if req.direction is Direction.LONG else 2,
+            float(req.price),
+            volume,
+            self.order_token,
+        )
+        if not sent:
+            self.write_log(f"C++ 风控拒绝委托：{self.native_client.last_error}")
             return ""
         self.pending_order_tokens.add(orderid)
-        order = req.create_order_data(orderid, self.gateway_name)
-        self.on_order(order)
-        self.write_log(f"委托已提交 C++ 风控：{req.symbol} {req.price} x {volume}")
-        return order.vt_orderid
+        self.on_order(req.create_order_data(orderid, self.gateway_name))
+        trace_id = order_trace_id(self.account_id, orderid)
+        self.write_log(
+            f"TraceID={trace_id} Stage=VnpySubmit 委托已提交 C++ 风控："
+            f"{req.symbol} {req.price} x {volume}"
+        )
+        return f"{self.gateway_name}.{orderid}"
 
     def cancel_order(self, req: CancelRequest) -> None:
-        if not self.orders_enabled or not self.control_connection:
-            self.write_log("交易控制未就绪，撤单未发送")
+        if not self.orders_enabled or not self.native_client:
+            self.write_log("C++ 风控会话未就绪，撤单未发送")
             return
         if req.orderid in self.pending_order_tokens:
             self.write_log("委托尚未取得 ATP 委托号，请稍后再撤")
             return
         order_ref = self.order_refs.get(req.orderid, req.orderid)
-        command = {
-            "type": "cancel",
-            "order_ref": order_ref,
-            "exchange": req.exchange.value,
-        }
-        if self.control_connection.send(command):
-            self.write_log(f"撤单已提交 C++ 风控：{order_ref}")
+        if self.native_client.cancel_order(order_ref, req.exchange.value):
+            trace_id = order_trace_id(self.account_id, 0, order_ref)
+            parent_trace_id = order_trace_id(self.account_id, req.orderid)
+            self.write_log(
+                f"TraceID={trace_id} ParentTraceID={parent_trace_id} "
+                f"Stage=VnpyCancel 撤单已提交 C++ 风控：{order_ref}"
+            )
         else:
-            self.write_log("交易控制连接已断开，撤单未发送")
+            self.write_log(f"撤单发送失败：{self.native_client.last_error}")
 
     def query_account(self) -> None:
-        self._send_query("fund")
+        self.write_log("资金由 XTrader 通过 XServer 持续推送，无需旁路查询柜台")
 
     def query_position(self) -> None:
-        self._send_query("position")
+        self.write_log("持仓由 XTrader 通过 XServer 持续推送，无需旁路查询柜台")
 
     def query_all(self) -> None:
-        for name in ("fund", "position", "order", "trade"):
-            self._send_query(name)
+        self.query_account()
+        self.query_position()
 
-    def _send_query(self, name: str) -> None:
-        if not self.trade_connection or not self.trade_connection.send({"type": "query", "name": name}):
-            self.write_log(f"ATP交易桥未连接，无法查询{name}")
+    def _on_timer(self, event) -> None:
+        if not self.native_client and self._connection_setting and time.monotonic() >= self._next_auth_retry_at:
+            self._open_authenticated_connection()
+        if not self.native_client:
+            return
+        for message in self.native_client.poll():
+            self._on_native_message(message)
+        if time.monotonic() >= self._next_session_refresh_at:
+            self._open_authenticated_connection()
+            self._publish_connection_state()
+            return
+        if not self.native_client.is_connected():
+            self.sent_subscriptions.clear()
+            self.native_client.reconnect()
+        elif not self.native_client.is_logged_in() and time.monotonic() >= self._next_login_at:
+            # The native client retries only the compact login packet. This
+            # keeps TCP reconnection and authentication failures independent.
+            # Limit retries so a bad credential cannot flood XServer logs.
+            self.native_client.login()
+            self._next_login_at = time.monotonic() + 3.0
+        self._flush_subscriptions()
+        self._publish_connection_state()
 
-    def _on_trade_connected(self, connection: JsonLineConnection) -> None:
-        self.query_all()
-
-    def _on_connection_state(self, name: str, connected: bool, detail: str) -> None:
-        if name == "交易控制" and not connected:
-            self.orders_enabled = False
-        self.on_event(EVENT_QF_CONNECTION, {
-            "name": name,
-            "connected": connected,
-            "detail": detail,
-            "time": datetime.now(),
-        })
-        state = "已连接" if connected else "已断开"
-        self.write_log(f"{name}{state}：{detail}")
-
-    def _on_control_message(self, message: dict) -> None:
-        message_type = message.get("type")
-        if message_type == "control_status":
-            xserver_connected = bool(message.get("xserver_connected"))
-            orders_enabled = bool(message.get("orders_enabled"))
-            self.orders_enabled = xserver_connected and orders_enabled
-            if self.orders_enabled:
-                detail = "C++风控已启用"
-            elif not orders_enabled:
-                detail = "交易开关未开启"
+    def _flush_subscriptions(self) -> None:
+        if not self.native_client or not self.native_client.is_logged_in():
+            return
+        for vt_symbol, request in self.requested_subscriptions.items():
+            if vt_symbol in self.sent_subscriptions:
+                continue
+            if self.native_client.subscribe(request.symbol, request.exchange.value):
+                self.sent_subscriptions.add(vt_symbol)
+                self.write_log(f"实时行情已订阅：{vt_symbol}")
             else:
-                detail = "C++中间层尚未登录"
+                self.write_log(f"行情订阅失败：{vt_symbol}，{self.native_client.last_error}")
+
+    def _publish_contracts(self) -> None:
+        for item in self.security_master:
+            exchange = map_exchange(item.get("exchange", ""))
+            symbol = str(item.get("ticker", "")).strip()
+            if not symbol or exchange is Exchange.LOCAL:
+                continue
+            self.contracts.add(f"{symbol}.{exchange.value}")
+            self.on_contract(ContractData(
+                gateway_name=self.gateway_name,
+                symbol=symbol,
+                exchange=exchange,
+                name=str(item.get("name", symbol)),
+                product=Product.EQUITY,
+                size=1,
+                pricetick=0.01,
+                min_volume=float(item.get("lot_size", 100) or 100),
+                net_position=True,
+            ))
+
+    def _publish_connection_state(self) -> None:
+        connected = bool(self.native_client and self.native_client.is_connected())
+        logged_in = bool(self.native_client and self.native_client.is_logged_in())
+        self.orders_enabled = connected and logged_in
+        if connected and logged_in:
+            detail = "XServer 已登录，C++ 风控在线"
+        elif connected:
+            detail = "已连接 XServer，正在登录"
+        else:
+            detail = "XServer 未连接"
+        session_state = (connected, logged_in)
+        if not connected:
+            self.sent_subscriptions.clear()
+        if session_state != self._last_session_state:
             self.on_event(EVENT_QF_CONNECTION, {
-                "name": "交易控制",
-                "connected": self.orders_enabled,
+                "name": "C++原生会话",
+                # Only enable an order button after the XServer permission
+                # response has completed; a bare TCP connection is not enough.
+                "connected": connected and logged_in,
+                "tcp_connected": connected,
                 "detail": detail,
                 "time": datetime.now(),
             })
-            self.write_log(f"交易控制状态：{detail}")
-        elif message_type == "command_ack":
-            self.write_log(f"C++中间层已接收{message.get('command', '')}请求")
-        elif message_type == "command_error":
-            self.write_log(f"交易控制拒绝请求：{message.get('error', '未知错误')}")
+            self.write_log(f"{detail}")
+            self._last_session_state = session_state
+
+    def _on_native_message(self, message: dict) -> None:
+        message_type = message.get("type")
+        if message_type == "login":
+            if not message.get("connected"):
+                self.write_log(f"XServer 登录失败：{message.get('error', '未知错误')}")
+                # A rejected login can mean that AuthAdminService was restarted
+                # and lost a local development session. Renew it immediately
+                # instead of retrying the same opaque identifier for 10 minutes.
+                self._next_session_refresh_at = 0.0
+            return
+        if message_type == "stock_quote":
+            self._on_market_message(message)
+        elif message_type in {"fund", "position", "order_status"}:
+            self._on_trade_message(message)
+        elif message_type == "event_log":
+            self.write_log(f"{message.get('app', 'QuantFabric')}：{message.get('message', '')}")
 
     def _on_market_message(self, message: dict) -> None:
-        if message.get("type") != "stock_quote":
-            return
         symbol = str(message.get("ticker", "")).strip()
         exchange = map_exchange(message.get("exchange", ""))
-        if not symbol:
+        if not symbol or exchange is Exchange.LOCAL:
             return
         vt_symbol = f"{symbol}.{exchange.value}"
+        name = self.security_names.get(vt_symbol, symbol)
         if vt_symbol not in self.contracts:
             self.contracts.add(vt_symbol)
             self.on_contract(ContractData(
                 gateway_name=self.gateway_name,
                 symbol=symbol,
                 exchange=exchange,
-                name=str(message.get("name", symbol)),
+                name=name,
                 product=Product.EQUITY,
                 size=1,
                 pricetick=0.01,
                 min_volume=100,
                 net_position=True,
             ))
-
-        timestamp = str(message.get("update_time", "00:00:00"))
-        milliseconds = int(message.get("millisec", 0) or 0)
+        timestamp = str(message.get("update_time", ""))
         try:
-            tick_time = datetime.combine(datetime.now().date(), datetime.strptime(timestamp, "%H:%M:%S").time())
-            tick_time = tick_time.replace(microsecond=milliseconds * 1000)
+            tick_time = datetime.strptime(timestamp, "%H:%M:%S")
+            tick_time = datetime.combine(datetime.now().date(), tick_time.time())
         except ValueError:
             tick_time = datetime.now()
-
         bids = list(message.get("bid_prices", [])) + [0] * 5
         asks = list(message.get("ask_prices", [])) + [0] * 5
         bid_volumes = list(message.get("bid_volumes", [])) + [0] * 5
         ask_volumes = list(message.get("ask_volumes", [])) + [0] * 5
-        tick = TickData(
+        self.on_tick(TickData(
             gateway_name=self.gateway_name,
             symbol=symbol,
             exchange=exchange,
             datetime=tick_time,
-            name=str(message.get("name", symbol)),
+            name=name,
             last_price=float(message.get("last_price", 0) or 0),
             volume=float(message.get("volume", 0) or 0),
             turnover=float(message.get("turnover", 0) or 0),
@@ -362,19 +423,14 @@ class QuantFabricGateway(BaseGateway):
             open_price=float(message.get("open", 0) or 0),
             high_price=float(message.get("high", 0) or 0),
             low_price=float(message.get("low", 0) or 0),
-            bid_price_1=float(bids[0] or 0), bid_price_2=float(bids[1] or 0),
-            bid_price_3=float(bids[2] or 0), bid_price_4=float(bids[3] or 0),
-            bid_price_5=float(bids[4] or 0), ask_price_1=float(asks[0] or 0),
-            ask_price_2=float(asks[1] or 0), ask_price_3=float(asks[2] or 0),
-            ask_price_4=float(asks[3] or 0), ask_price_5=float(asks[4] or 0),
-            bid_volume_1=float(bid_volumes[0] or 0), bid_volume_2=float(bid_volumes[1] or 0),
-            bid_volume_3=float(bid_volumes[2] or 0), bid_volume_4=float(bid_volumes[3] or 0),
-            bid_volume_5=float(bid_volumes[4] or 0), ask_volume_1=float(ask_volumes[0] or 0),
-            ask_volume_2=float(ask_volumes[1] or 0), ask_volume_3=float(ask_volumes[2] or 0),
-            ask_volume_4=float(ask_volumes[3] or 0), ask_volume_5=float(ask_volumes[4] or 0),
-            localtime=datetime.now(),
-        )
-        self.on_tick(tick)
+            bid_price_1=float(bids[0]), bid_price_2=float(bids[1]), bid_price_3=float(bids[2]),
+            bid_price_4=float(bids[3]), bid_price_5=float(bids[4]), ask_price_1=float(asks[0]),
+            ask_price_2=float(asks[1]), ask_price_3=float(asks[2]), ask_price_4=float(asks[3]),
+            ask_price_5=float(asks[4]), bid_volume_1=float(bid_volumes[0]), bid_volume_2=float(bid_volumes[1]),
+            bid_volume_3=float(bid_volumes[2]), bid_volume_4=float(bid_volumes[3]), bid_volume_5=float(bid_volumes[4]),
+            ask_volume_1=float(ask_volumes[0]), ask_volume_2=float(ask_volumes[1]), ask_volume_3=float(ask_volumes[2]),
+            ask_volume_4=float(ask_volumes[3]), ask_volume_5=float(ask_volumes[4]), localtime=datetime.now(),
+        ))
 
     def _on_trade_message(self, message: dict) -> None:
         message_type = message.get("type")
@@ -400,9 +456,17 @@ class QuantFabricGateway(BaseGateway):
                 yd_volume=float(message.get("yesterday", 0) or 0),
             ))
         elif message_type == "order_status":
-            self.on_order(self._map_order(message))
-        elif message_type == "command_error":
-            self.write_log(f"ATP查询失败：{message.get('error', '未知错误')}")
+            order = self._map_order(message)
+            self.on_order(order)
+            trace_id = order_trace_id(
+                self.account_id,
+                message.get("order_token", ""),
+                str(message.get("order_ref", "")),
+            )
+            self.write_log(
+                f"TraceID={trace_id} Stage=VnpyOrderStatus Status={message.get('status', 'unknown')} "
+                f"OrderRef={message.get('order_ref', '') or '-'} ErrorID={message.get('error_id', 0)}"
+            )
 
     def _map_order(self, message: dict) -> OrderData:
         statuses = {
@@ -411,10 +475,10 @@ class QuantFabricGateway(BaseGateway):
             "partial": Status.PARTTRADED,
             "partial_cancelled": Status.CANCELLED,
             "filled": Status.ALLTRADED,
+            "cancelling": Status.SUBMITTING,
             "cancelled": Status.CANCELLED,
             "rejected": Status.REJECTED,
         }
-        side = int(message.get("side", 0) or 0)
         order_token = str(message.get("order_token") or "").strip()
         order_ref = str(message.get("order_ref") or message.get("order_sys_id") or "-").strip()
         if order_token and order_ref != "-":
@@ -426,11 +490,11 @@ class QuantFabricGateway(BaseGateway):
             exchange=map_exchange(message.get("exchange", "")),
             orderid=order_token or order_ref,
             type=OrderType.LIMIT,
-            direction=Direction.LONG if side == 1 else Direction.SHORT,
+            direction=Direction.LONG if int(message.get("side", 0) or 0) == 1 else Direction.SHORT,
             price=float(message.get("price", 0) or 0),
             volume=float(message.get("volume", 0) or 0),
             traded=float(message.get("traded", 0) or 0),
             status=statuses.get(str(message.get("status", "")), Status.SUBMITTING),
             datetime=datetime.now(),
-            reference="QuantFabric/ATP",
+            reference="QuantFabric/XServer",
         )

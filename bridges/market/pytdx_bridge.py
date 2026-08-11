@@ -36,7 +36,7 @@ def load_config(path):
 
 
 class LocalQuoteServer:
-    """单进程广播服务；断开的消费者会在下一次发送时自动移除。"""
+    """向 C++ 行情插件广播行情，并接收同一连接上的订阅命令。"""
 
     def __init__(self, host, port):
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -44,25 +44,57 @@ class LocalQuoteServer:
         self._server.bind((host, port))
         self._server.listen(4)
         self._server.setblocking(False)
-        self._clients = []
+        self._clients = {}
 
-    def publish(self, quote):
+    def _accept_clients(self):
         while True:
             try:
                 client, _ = self._server.accept()
-                self._clients.append(client)
+                client.setblocking(False)
+                self._clients[client] = b""
             except BlockingIOError:
-                break
+                return
 
+    def poll_commands(self, handler):
+        self._accept_clients()
+        disconnected = []
+        for client, pending in list(self._clients.items()):
+            try:
+                block = client.recv(65536)
+            except BlockingIOError:
+                continue
+            except OSError:
+                disconnected.append(client)
+                continue
+            if not block:
+                disconnected.append(client)
+                continue
+            pending += block
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                if not line.strip():
+                    continue
+                try:
+                    handler(json.loads(line.decode("utf-8")))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                    print(json.dumps({"event": "subscription_rejected", "error": str(exc)}), flush=True)
+            self._clients[client] = pending
+        for client in disconnected:
+            client.close()
+            self._clients.pop(client, None)
+
+    def publish(self, quote):
+        self._accept_clients()
         payload = (json.dumps(quote, ensure_ascii=False) + "\n").encode("utf-8")
-        active_clients = []
+        disconnected = []
         for client in self._clients:
             try:
                 client.sendall(payload)
-                active_clients.append(client)
             except OSError:
-                client.close()
-        self._clients = active_clients
+                disconnected.append(client)
+        for client in disconnected:
+            client.close()
+            self._clients.pop(client, None)
 
     def close(self):
         for client in self._clients:
@@ -109,6 +141,42 @@ def normalize_quote(raw, security):
     }
 
 
+def is_a_share(market, ticker):
+    """仅保留当前 ATP 现金交易链路支持的沪深 A 股。"""
+    prefixes = {
+        0: ("000", "001", "002", "003", "300", "301"),
+        1: ("600", "601", "603", "605", "688", "689"),
+    }
+    return len(ticker) == 6 and ticker.startswith(prefixes.get(market, ()))
+
+
+def fetch_security_master(api):
+    securities = {}
+    for market, exchange in ((0, "SZSE"), (1, "SSE")):
+        count = int(api.get_security_count(market) or 0)
+        for offset in range(0, count, 1000):
+            for item in api.get_security_list(market, offset) or []:
+                ticker = str(item.get("code", "")).strip()
+                if not is_a_share(market, ticker):
+                    continue
+                security = {
+                    "market": market,
+                    "ticker": ticker,
+                    "exchange": exchange,
+                    "name": str(item.get("name", ticker)).strip() or ticker,
+                    "lot_size": int(item.get("volunit", 100) or 100),
+                }
+                securities[(exchange, ticker)] = security
+    return sorted(securities.values(), key=lambda item: (item["exchange"], item["ticker"]))
+
+
+def save_security_master(path, securities):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(securities, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
 def fetch_quotes(api, securities):
     request = [(security["market"], security["ticker"]) for security in securities]
     result = api.get_security_quotes(request)
@@ -129,6 +197,28 @@ def main():
     selected = connect(api, config["servers"], config.get("connect_timeout", 2.0))
     print(json.dumps({"event": "tdx_connected", "server": selected}), flush=True)
 
+    security_master = fetch_security_master(api)
+    security_by_key = {
+        (security["exchange"], security["ticker"]): security
+        for security in security_master
+    }
+    master_path = Path(config.get("security_master_path", "runtime/data/security_master.json"))
+    if not master_path.is_absolute():
+        master_path = ROOT_DIR / master_path
+    save_security_master(master_path, security_master)
+    print(json.dumps({
+        "event": "security_master_ready",
+        "count": len(security_master),
+        "path": str(master_path),
+    }, ensure_ascii=False), flush=True)
+
+    subscriptions = {}
+    for configured in config.get("securities", []):
+        key = (configured["exchange"], configured["ticker"])
+        security = security_by_key.get(key)
+        if security:
+            subscriptions[key] = security
+
     quote_server = None
     try:
         if not args.once:
@@ -136,11 +226,33 @@ def main():
             quote_server = LocalQuoteServer(listen["host"], listen["port"])
             print(json.dumps({"event": "bridge_listening", "listen": listen}), flush=True)
 
+        def subscribe(command):
+            if command.get("type") != "subscribe":
+                raise ValueError("不支持的行情控制命令")
+            key = (str(command.get("exchange", "")).strip().upper(),
+                   str(command.get("ticker", "")).strip())
+            security = security_by_key.get(key)
+            if not security:
+                raise ValueError(f"证券主数据中不存在 {key[1]}.{key[0]}")
+            subscriptions[key] = security
+            print(json.dumps({
+                "event": "subscription_added",
+                "ticker": security["ticker"],
+                "exchange": security["exchange"],
+                "name": security["name"],
+                "active": len(subscriptions),
+            }, ensure_ascii=False), flush=True)
+
         while True:
-            for quote in fetch_quotes(api, config["securities"]):
-                print(json.dumps(quote, ensure_ascii=False), flush=True)
-                if quote_server:
-                    quote_server.publish(quote)
+            if quote_server:
+                quote_server.poll_commands(subscribe)
+            securities = list(subscriptions.values())
+            batch_size = int(config.get("quote_batch_size", 80))
+            for offset in range(0, len(securities), batch_size):
+                for quote in fetch_quotes(api, securities[offset:offset + batch_size]):
+                    print(json.dumps(quote, ensure_ascii=False), flush=True)
+                    if quote_server:
+                        quote_server.publish(quote)
             if args.once:
                 break
             time.sleep(config.get("poll_interval", 1.0))

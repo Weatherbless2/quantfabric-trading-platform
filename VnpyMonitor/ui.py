@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import os
-import socket
+import unicodedata
+from collections import OrderedDict
 from pathlib import Path
 
+from vnpy.chart import CandleItem, ChartWidget, VolumeItem
 from vnpy.event import Event
-from vnpy.trader.constant import Direction, Exchange, Offset, OrderType
+from vnpy.trader.constant import Direction, Exchange, Interval, Offset, OrderType
 from vnpy.trader.event import EVENT_ACCOUNT, EVENT_TICK
-from vnpy.trader.object import OrderRequest
+from vnpy.trader.object import BarData, OrderRequest, SubscribeRequest
 from vnpy.trader.ui import QtCore, QtGui, QtWidgets
 from vnpy.trader.ui.widget import AccountMonitor, LogMonitor, OrderMonitor, PositionMonitor, TickMonitor
 
-from .gateway import EVENT_QF_CONNECTION, GATEWAY_NAME, QuantFabricGateway
+from .gateway import EVENT_QF_CONNECTION, GATEWAY_NAME, QuantFabricGateway, load_security_master
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+def normalize_search_text(value: str) -> str:
+    """统一全角/半角字符并忽略证券简称中的空白。"""
+    return "".join(unicodedata.normalize("NFKC", value).lower().split())
 
 
 STYLE = """
@@ -116,10 +123,10 @@ class OrderBookWidget(QtWidgets.QWidget):
 
 class ServiceTable(QtWidgets.QTableWidget):
     SERVICES = {
+        "AuthAdmin": "认证与权限服务",
         "ATPBridge": "ATP 柜台桥",
         "PyTdxBridge": "通达信行情桥",
         "XServer": "消息服务",
-        "XVnpyBridge": "交易控制桥",
         "XWatcher": "监控服务",
         "XRiskJudge": "风控服务",
         "XTrader": "交易路由",
@@ -159,6 +166,114 @@ class ServiceTable(QtWidgets.QTableWidget):
                 self.setItem(row, column, item)
 
 
+class SecurityMasterTable(QtWidgets.QTableWidget):
+    """展示全量证券主数据；实时行情只对用户选择的标的按需订阅。"""
+
+    def __init__(self, securities: list[dict]) -> None:
+        super().__init__(len(securities), 3)
+        self.setHorizontalHeaderLabels(["代码", "名称", "交易所"])
+        self.verticalHeader().hide()
+        self.setEditTriggers(self.EditTrigger.NoEditTriggers)
+        self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
+        self.setSortingEnabled(False)
+        for row, security in enumerate(securities):
+            ticker = str(security.get("ticker", ""))
+            exchange = str(security.get("exchange", ""))
+            values = (ticker, str(security.get("name", ticker)), exchange)
+            for column, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(value)
+                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                if column == 0:
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole, f"{ticker}.{exchange}")
+                self.setItem(row, column, item)
+        self.setSortingEnabled(True)
+        self.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)
+        self.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+
+
+class SecurityUniversePanel(QtWidgets.QWidget):
+    """左侧常驻的全量证券列表，行情仍只对选中的标的订阅。"""
+
+    def __init__(self, securities: list[dict], select_callback) -> None:
+        super().__init__()
+        self.securities = securities
+        title = QtWidgets.QLabel(f"证券库（{len(securities)}）")
+        title.setObjectName("panelTitle")
+        self.filter_edit = QtWidgets.QLineEdit()
+        self.filter_edit.setPlaceholderText("输入代码或名称检索")
+        self.filter_edit.setClearButtonEnabled(True)
+        self.table = SecurityMasterTable(securities)
+        self.table.cellDoubleClicked.connect(select_callback)
+        self.filter_edit.textChanged.connect(self._filter_rows)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        layout.addWidget(title)
+        layout.addWidget(self.filter_edit)
+        layout.addWidget(self.table, 1)
+
+    def _filter_rows(self, text: str) -> None:
+        keyword = normalize_search_text(text)
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row in range(self.table.rowCount()):
+                haystack = normalize_search_text(" ".join(
+                    self.table.item(row, column).text() for column in range(3)
+                ))
+                self.table.setRowHidden(row, bool(keyword and keyword not in haystack))
+        finally:
+            self.table.setUpdatesEnabled(True)
+
+
+class VisibleCandleItem(CandleItem):
+    """在只有一根或平盘 Bar 时仍提供可绘制的纵轴范围。"""
+
+    def get_y_range(self, min_ix=None, max_ix=None):
+        minimum, maximum = super().get_y_range(min_ix, max_ix)
+        if maximum <= minimum:
+            padding = max(abs(maximum) * 0.005, 0.01)
+            return minimum - padding, maximum + padding
+        return minimum, maximum
+
+
+class VisibleVolumeItem(VolumeItem):
+    """成交量为零时扩展纵轴，避免空白图层误认为没有数据。"""
+
+    def get_y_range(self, min_ix=None, max_ix=None):
+        minimum, maximum = super().get_y_range(min_ix, max_ix)
+        return minimum, max(maximum, 1)
+
+
+class RealtimeChartWidget(ChartWidget):
+    """展示当前会话累积的 1 分钟 K 线和成交量。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setBackground("#ffffff")
+        self.add_plot("price", minimum_height=120, hide_x_axis=True)
+        self.add_item(VisibleCandleItem, "candle", "price")
+        self.add_plot("volume", minimum_height=45)
+        self.add_item(VisibleVolumeItem, "volume", "volume")
+        self.close_curve = self.get_plot("price").plot(
+            pen=QtGui.QPen(QtGui.QColor("#c0392b"), 2),
+            symbol="o",
+            symbolSize=7,
+            symbolPen=QtGui.QPen(QtGui.QColor("#c0392b")),
+            symbolBrush=QtGui.QBrush(QtGui.QColor("#ffffff")),
+        )
+        for plot in self.get_all_plots():
+            plot.getAxis("right").setPen(QtGui.QPen(QtGui.QColor("#68717d")))
+            plot.getAxis("right").setTextPen(QtGui.QPen(QtGui.QColor("#4d5966")))
+            plot.getAxis("bottom").setPen(QtGui.QPen(QtGui.QColor("#68717d")))
+            plot.getAxis("bottom").setTextPen(QtGui.QPen(QtGui.QColor("#4d5966")))
+
+    def update_close_curve(self, bars) -> None:
+        self.close_curve.setData(
+            list(range(len(bars))),
+            [bar.close_price for bar in bars],
+        )
+
+
 class ConfirmingOrderMonitor(OrderMonitor):
     """复用 vn.py 委托表，并在撤单前增加明确确认。"""
 
@@ -195,7 +310,7 @@ class TradingPanel(QtWidgets.QWidget):
         self.volume.setSingleStep(100)
         self.volume.setValue(100)
         self.volume.setSuffix(" 股")
-        self.state = QtWidgets.QLabel("交易控制连接中")
+        self.state = QtWidgets.QLabel("C++ 原生会话连接中")
         self.state.setObjectName("statusOffline")
 
         heading = QtWidgets.QHBoxLayout()
@@ -285,6 +400,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.main_engine = main_engine
         self.event_engine = event_engine
         self.ticks = {}
+        self.bars: dict[str, OrderedDict] = {}
+        self.volume_anchors: dict[str, float] = {}
+        self.securities = load_security_master()
         self.setWindowTitle("QuantFabric 交易工作台 - vn.py")
         self.resize(1480, 900)
         self.setMinimumSize(1100, 700)
@@ -322,7 +440,18 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.tick_monitor.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.ResizeToContents
         )
-        market_split.addWidget(self.tick_monitor)
+        left_market = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_market)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(self.tick_monitor, 3)
+        chart_title = QtWidgets.QLabel("实时 1 分钟 K 线（启动后累积）")
+        chart_title.setObjectName("panelTitle")
+        left_layout.addWidget(chart_title)
+        self.chart = RealtimeChartWidget()
+        self.chart.setObjectName("panel")
+        left_layout.addWidget(self.chart, 2)
+        market_split.addWidget(left_market)
         self.order_book = OrderBookWidget(self.event_engine)
         right_column = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_column)
@@ -351,12 +480,21 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             )
             monitor.horizontalHeader().setStretchLastSection(True)
         self.service_table = ServiceTable()
+        self.security_panel = SecurityUniversePanel(self.securities, self._select_security_row)
+        self.security_table = self.security_panel.table
         tabs.addTab(self.account_monitor, "资金")
         tabs.addTab(self.position_monitor, "持仓")
         tabs.addTab(self.order_monitor, "委托")
         tabs.addTab(self.service_table, "服务状态")
         tabs.addTab(self.log_monitor, "运行日志")
         content_layout.addWidget(tabs, 4)
+
+        self.security_dock = QtWidgets.QDockWidget(f"证券库（{len(self.securities)}）", self)
+        self.security_dock.setObjectName("securityDock")
+        self.security_dock.setWidget(self.security_panel)
+        self.security_dock.setMinimumWidth(245)
+        self.security_dock.setAllowedAreas(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.security_dock)
 
         timer = QtCore.QTimer(self)
         timer.timeout.connect(self.service_table.refresh)
@@ -373,17 +511,36 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         brand.setObjectName("brand")
         subtitle = QtWidgets.QLabel("vn.py 交易工作台")
         subtitle.setObjectName("subBrand")
-        self.trading_mode = QtWidgets.QLabel("交易控制连接中")
+        self.trading_mode = QtWidgets.QLabel("C++ 原生会话连接中")
         self.trading_mode.setObjectName("statusOffline")
-        self.market_status = QtWidgets.QLabel("行情桥连接中")
+        self.market_status = QtWidgets.QLabel("行情等待中")
         self.market_status.setObjectName("statusOffline")
-        self.trade_status = QtWidgets.QLabel("ATP桥连接中")
+        self.trade_status = QtWidgets.QLabel("账户等待中")
         self.trade_status.setObjectName("statusOffline")
-        self.server_status = QtWidgets.QLabel("中间层检测中")
+        self.server_status = QtWidgets.QLabel("XServer 检测中")
         self.server_status.setObjectName("statusOffline")
+        self.universe_status = QtWidgets.QLabel(f"证券库 {len(self.securities)} 只")
+        self.universe_status.setObjectName("subBrand")
         self.symbol_selector = QtWidgets.QComboBox()
         self.symbol_selector.setMinimumWidth(210)
-        self.symbol_selector.addItem("300007 汉威科技 · SZSE", "300007.SZSE")
+        self.symbol_selector.setMaxVisibleItems(20)
+        self.symbol_selector.setEditable(True)
+        self.symbol_selector.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self.symbol_selector.view().setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        )
+        ordered = sorted(
+            self.securities,
+            key=lambda item: (item.get("ticker") != "300007", item.get("exchange", ""), item.get("ticker", "")),
+        )
+        for security in ordered:
+            ticker = str(security.get("ticker", ""))
+            exchange = str(security.get("exchange", ""))
+            name = str(security.get("name", ticker))
+            self.symbol_selector.addItem(f"{ticker} {name} · {exchange}", f"{ticker}.{exchange}")
+        completer = self.symbol_selector.completer()
+        completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         self.symbol_selector.currentIndexChanged.connect(self._select_symbol)
         refresh = QtWidgets.QPushButton("刷新账户")
         refresh.setToolTip("重新查询 ATP 资金、持仓、委托和成交")
@@ -396,14 +553,10 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.market_status)
         layout.addWidget(self.trade_status)
         layout.addWidget(self.server_status)
+        layout.addWidget(self.universe_status)
         layout.addWidget(self.symbol_selector)
         layout.addWidget(refresh)
 
-        timer = QtCore.QTimer(self)
-        timer.timeout.connect(self._check_xserver)
-        timer.start(2000)
-        self.server_timer = timer
-        self._check_xserver()
         return header
 
     def _register_events(self) -> None:
@@ -416,7 +569,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
 
     def _update_tick_metrics(self, event: Event) -> None:
         tick = event.data
+        self._set_status(self.market_status, "行情在线", True)
         self.ticks[tick.vt_symbol] = tick
+        self._update_bar(tick)
         if self.symbol_selector.findData(tick.vt_symbol) < 0:
             display = f"{tick.symbol} {tick.name} · {tick.exchange.value}"
             self.symbol_selector.addItem(display, tick.vt_symbol)
@@ -441,41 +596,98 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.order_book.set_symbol(vt_symbol)
         tick = self.ticks.get(vt_symbol)
         self.trading_panel.set_symbol(vt_symbol, tick)
+        self.subscribe_selected()
         if tick:
             self._render_tick_metrics(tick)
+        self._render_chart(vt_symbol)
+
+    def subscribe_selected(self) -> None:
+        vt_symbol = self.symbol_selector.currentData()
+        if not vt_symbol or "." not in vt_symbol:
+            return
+        symbol, exchange_value = vt_symbol.rsplit(".", 1)
+        self.main_engine.subscribe(
+            SubscribeRequest(symbol=symbol, exchange=Exchange(exchange_value)),
+            GATEWAY_NAME,
+        )
+
+    def _select_security_row(self, row: int, column: int) -> None:
+        code_item = self.security_table.item(row, 0)
+        if not code_item:
+            return
+        vt_symbol = code_item.data(QtCore.Qt.ItemDataRole.UserRole)
+        index = self.symbol_selector.findData(vt_symbol)
+        if index >= 0:
+            self.symbol_selector.setCurrentIndex(index)
+
+    def _update_bar(self, tick) -> None:
+        """将累计成交量行情聚合成当前标的的 1 分钟 Bar。"""
+        bar_datetime = tick.datetime.replace(second=0, microsecond=0)
+        bars = self.bars.setdefault(tick.vt_symbol, OrderedDict())
+        bar = bars.get(bar_datetime)
+        if bar is None:
+            self.volume_anchors[tick.vt_symbol] = tick.volume
+            bar = BarData(
+                gateway_name=GATEWAY_NAME,
+                symbol=tick.symbol,
+                exchange=tick.exchange,
+                datetime=bar_datetime,
+                interval=Interval.MINUTE,
+                open_price=tick.last_price,
+                high_price=tick.last_price,
+                low_price=tick.last_price,
+                close_price=tick.last_price,
+            )
+            bars[bar_datetime] = bar
+        bar.high_price = max(bar.high_price, tick.last_price)
+        bar.low_price = min(bar.low_price, tick.last_price)
+        bar.close_price = tick.last_price
+        bar.turnover = tick.turnover
+        bar.volume = max(0, tick.volume - self.volume_anchors[tick.vt_symbol])
+        while len(bars) > 240:
+            bars.popitem(last=False)
+        if self.symbol_selector.currentData() == tick.vt_symbol:
+            self._render_chart(tick.vt_symbol)
+
+    def _render_chart(self, vt_symbol: str) -> None:
+        bars = self.bars.get(vt_symbol)
+        if not bars:
+            self.chart.clear_all()
+            self.chart.update_close_curve([])
+            return
+        self.chart.clear_all()
+        # Keep one empty slot on each side of the first candle. Otherwise its
+        # x=0 center lies on the plot boundary and Qt clips the whole line.
+        self.chart._bar_count = max(2, min(60, len(bars)))
+        history = list(bars.values())
+        self.chart.update_history(history)
+        self.chart.update_close_curve(history)
 
     def _update_account_metrics(self, event: Event) -> None:
         account = event.data
+        self._set_status(self.trade_status, "账户在线", True)
         self.balance.value.setText(f"¥ {account.balance:,.2f}")
         self.available.value.setText(f"¥ {account.available:,.2f}")
 
     def _update_connection(self, event: Event) -> None:
         data = event.data
-        if data["name"] == "交易控制":
+        if data["name"] == "C++原生会话":
             enabled = bool(data["connected"])
             self.trading_panel.set_trading_enabled(enabled)
-            self.trading_mode.setText("交易模式 · C++风控" if enabled else "交易控制不可用")
-            self.trading_mode.setObjectName("statusOnline" if enabled else "statusOffline")
-            self.trading_mode.style().unpolish(self.trading_mode)
-            self.trading_mode.style().polish(self.trading_mode)
+            self._set_status(
+                self.trading_mode,
+                "交易模式 · C++风控" if enabled else data["detail"],
+                enabled,
+            )
+            self._set_status(self.server_status, data["detail"], bool(data.get("tcp_connected")))
             return
-        label = self.market_status if data["name"] == "行情桥" else self.trade_status
-        label.setText(f"{data['name']} {'在线' if data['connected'] else '离线'}")
-        label.setObjectName("statusOnline" if data["connected"] else "statusOffline")
+
+    @staticmethod
+    def _set_status(label: QtWidgets.QLabel, text: str, connected: bool) -> None:
+        label.setText(text)
+        label.setObjectName("statusOnline" if connected else "statusOffline")
         label.style().unpolish(label)
         label.style().polish(label)
-
-    def _check_xserver(self) -> None:
-        connected = False
-        try:
-            with socket.create_connection(("127.0.0.1", 8000), timeout=0.15):
-                connected = True
-        except OSError:
-            pass
-        self.server_status.setText(f"C++中间层 {'在线' if connected else '离线'}")
-        self.server_status.setObjectName("statusOnline" if connected else "statusOffline")
-        self.server_status.style().unpolish(self.server_status)
-        self.server_status.style().polish(self.server_status)
 
     def refresh_account(self) -> None:
         gateway = self.main_engine.get_gateway(GATEWAY_NAME)

@@ -1,4 +1,5 @@
 config/*.db
+config/AuthAdmin.env
 data/
 log/
 pids/
