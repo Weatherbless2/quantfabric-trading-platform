@@ -150,6 +150,7 @@ class QuantFabricGateway(BaseGateway):
         }
         self.requested_subscriptions: dict[str, SubscribeRequest] = {}
         self.sent_subscriptions: set[str] = set()
+        self.received_quotes: set[str] = set()
         self._last_session_state = (False, False)
         self._next_login_at = 0.0
         self._next_session_refresh_at = 0.0
@@ -203,6 +204,7 @@ class QuantFabricGateway(BaseGateway):
             self._next_session_refresh_at = time.monotonic() + 600.0
             self._next_auth_retry_at = 0.0
             self.sent_subscriptions.clear()
+            self.received_quotes.clear()
             self.write_log("已启动已鉴权 C++ 原生会话：vn.py -> PackMessage -> XServer")
 
     def close(self) -> None:
@@ -230,6 +232,9 @@ class QuantFabricGateway(BaseGateway):
             return ""
         if req.vt_symbol not in self.security_names:
             self.write_log(f"证券主数据中不存在，委托未发送：{req.vt_symbol}")
+            return ""
+        if req.vt_symbol not in self.received_quotes:
+            self.write_log(f"当前标的尚未收到有效行情，委托未发送：{req.vt_symbol}")
             return ""
         volume = int(req.volume)
         if req.price <= 0 or volume <= 0 or volume % 100:
@@ -299,6 +304,7 @@ class QuantFabricGateway(BaseGateway):
             return
         if not self.native_client.is_connected():
             self.sent_subscriptions.clear()
+            self.received_quotes.clear()
             self.native_client.reconnect()
         elif not self.native_client.is_logged_in() and time.monotonic() >= self._next_login_at:
             # The native client retries only the compact login packet. This
@@ -317,7 +323,7 @@ class QuantFabricGateway(BaseGateway):
                 continue
             if self.native_client.subscribe(request.symbol, request.exchange.value):
                 self.sent_subscriptions.add(vt_symbol)
-                self.write_log(f"实时行情已订阅：{vt_symbol}")
+                self.write_log(f"行情订阅请求已发送，等待首笔报价：{vt_symbol}")
             else:
                 self.write_log(f"行情订阅失败：{vt_symbol}，{self.native_client.last_error}")
 
@@ -389,6 +395,9 @@ class QuantFabricGateway(BaseGateway):
         if not symbol or exchange is Exchange.LOCAL:
             return
         vt_symbol = f"{symbol}.{exchange.value}"
+        if vt_symbol not in self.received_quotes:
+            self.received_quotes.add(vt_symbol)
+            self.write_log(f"实时行情已就绪：{vt_symbol}")
         name = self.security_names.get(vt_symbol, symbol)
         if vt_symbol not in self.contracts:
             self.contracts.add(vt_symbol)

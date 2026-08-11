@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import unicodedata
 from collections import OrderedDict
-from pathlib import Path
 
 from vnpy.chart import CandleItem, ChartWidget, VolumeItem
 from vnpy.event import Event
@@ -16,10 +14,6 @@ from vnpy.trader.ui import QtCore, QtGui, QtWidgets
 from vnpy.trader.ui.widget import AccountMonitor, LogMonitor, OrderMonitor, PositionMonitor, TickMonitor
 
 from .gateway import EVENT_QF_CONNECTION, GATEWAY_NAME, QuantFabricGateway, load_security_master
-
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
-
 
 def normalize_search_text(value: str) -> str:
     """统一全角/半角字符并忽略证券简称中的空白。"""
@@ -105,6 +99,8 @@ class OrderBookWidget(QtWidgets.QWidget):
         tick = self.ticks.get(vt_symbol)
         if tick:
             self._render_tick(tick)
+        else:
+            self.table.clearContents()
 
     def _render_tick(self, tick) -> None:
         rows = []
@@ -119,51 +115,6 @@ class OrderBookWidget(QtWidgets.QWidget):
                 if column < 2:
                     item.setForeground(QtGui.QColor(color))
                 self.table.setItem(row, column, item)
-
-
-class ServiceTable(QtWidgets.QTableWidget):
-    SERVICES = {
-        "AuthAdmin": "认证与权限服务",
-        "ATPBridge": "ATP 柜台桥",
-        "PyTdxBridge": "通达信行情桥",
-        "XServer": "消息服务",
-        "XWatcher": "监控服务",
-        "XRiskJudge": "风控服务",
-        "XTrader": "交易路由",
-        "XMarketCenter": "行情中心",
-        "XQuant": "策略引擎",
-    }
-
-    def __init__(self) -> None:
-        super().__init__(0, 4)
-        self.setHorizontalHeaderLabels(["服务", "职责", "状态", "进程号"])
-        self.verticalHeader().hide()
-        self.setEditTriggers(self.EditTrigger.NoEditTriggers)
-        self.horizontalHeader().setSectionResizeMode(self.horizontalHeader().ResizeMode.Stretch)
-        self.refresh()
-
-    def refresh(self) -> None:
-        self.setRowCount(0)
-        pid_dir = ROOT_DIR / "runtime" / "pids"
-        for name, description in self.SERVICES.items():
-            pid_file = pid_dir / f"{name}.pid"
-            pid = pid_file.read_text().strip() if pid_file.exists() else ""
-            running = False
-            if pid.isdigit():
-                try:
-                    os.kill(int(pid), 0)
-                    running = True
-                except OSError:
-                    pass
-            row = self.rowCount()
-            self.insertRow(row)
-            values = (name, description, "运行中" if running else "未运行", pid or "--")
-            for column, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                if column == 2:
-                    item.setForeground(QtGui.QColor("#16825d" if running else "#b42318"))
-                self.setItem(row, column, item)
 
 
 class SecurityMasterTable(QtWidgets.QTableWidget):
@@ -285,6 +236,12 @@ class RealtimeChartWidget(ChartWidget):
 
     def update_history(self, history) -> None:
         super().update_history(history)
+        # 只有当前分钟的一根 Bar 时，完整实体会占满纵轴并误导用户为异常行情。
+        # 此时保留收盘价点；累积出第二根真实 Bar 后再显示 K 线和成交量。
+        has_candle_history = len(history) > 1
+        self._items["candle"].setVisible(has_candle_history)
+        self._items["volume"].setVisible(has_candle_history)
+        self.close_curve.setVisible(not has_candle_history)
         # ChartWidget 仅在横轴变化时自动刷新纵轴。启动初期只有一根 Bar 时横轴
         # 范围保持不变，必须主动重算，否则价格会被绘制在过期的坐标范围之外。
         self._update_y_range()
@@ -311,6 +268,8 @@ class TradingPanel(QtWidgets.QWidget):
         super().__init__()
         self.main_engine = main_engine
         self.vt_symbol = "300007.SZSE"
+        self.connection_ready = False
+        self.quote_ready = False
         self.setObjectName("panel")
 
         title = QtWidgets.QLabel("普通股票委托")
@@ -365,18 +324,38 @@ class TradingPanel(QtWidgets.QWidget):
         self.vt_symbol = vt_symbol
         symbol, exchange = vt_symbol.rsplit(".", 1)
         self.symbol.setText(f"{symbol} · {exchange}")
-        if tick and tick.last_price > 0 and (changed or self.price.value() <= 0.01):
+        self.quote_ready = bool(tick and tick.last_price > 0)
+        if self.quote_ready and (changed or self.price.value() <= 0.01):
             self.price.setValue(tick.last_price)
+        elif changed:
+            self.price.setValue(0.01)
+        self._refresh_trading_state()
 
     def set_trading_enabled(self, enabled: bool) -> None:
+        self.connection_ready = enabled
+        if not enabled:
+            # 重连后必须等待当前标的的新报价，不能复用断线前的价格。
+            self.quote_ready = False
+        self._refresh_trading_state()
+
+    def _refresh_trading_state(self) -> None:
+        enabled = self.connection_ready and self.quote_ready
         self.buy_button.setEnabled(enabled)
         self.sell_button.setEnabled(enabled)
-        self.state.setText("C++风控已启用" if enabled else "交易控制不可用")
+        if not self.connection_ready:
+            self.state.setText("交易会话未就绪")
+        elif not self.quote_ready:
+            self.state.setText("等待当前标的行情")
+        else:
+            self.state.setText("可下单")
         self.state.setObjectName("statusOnline" if enabled else "statusOffline")
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
 
     def send_order(self, direction: Direction) -> None:
+        if not self.connection_ready or not self.quote_ready:
+            QtWidgets.QMessageBox.warning(self, "委托未发送", "当前标的尚未收到有效行情或交易会话未就绪。")
+            return
         symbol, exchange_value = self.vt_symbol.rsplit(".", 1)
         exchange = Exchange(exchange_value)
         side = "买入" if direction is Direction.LONG else "卖出"
@@ -420,10 +399,16 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.bars: dict[str, OrderedDict] = {}
         self.volume_anchors: dict[str, float] = {}
         self.securities = load_security_master()
-        self.setWindowTitle("QuantFabric 交易工作台 - vn.py")
+        self.security_names = {
+            f"{item.get('ticker', '')}.{item.get('exchange', '')}": item.get("name", item.get("ticker", ""))
+            for item in self.securities
+        }
+        self.setWindowTitle("QuantFabric 交易终端")
         self.resize(1480, 900)
         self.setMinimumSize(1100, 700)
         self._build_ui()
+        self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().showMessage("正在连接交易服务")
         self._register_events()
 
     def _build_ui(self) -> None:
@@ -462,7 +447,7 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
         left_layout.addWidget(self.tick_monitor, 3)
-        chart_title = QtWidgets.QLabel("实时 1 分钟 K 线（启动后累积）")
+        chart_title = QtWidgets.QLabel("实时 1 分钟 K 线")
         chart_title.setObjectName("panelTitle")
         left_layout.addWidget(chart_title)
         self.chart = RealtimeChartWidget()
@@ -496,13 +481,11 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
                 QtWidgets.QHeaderView.ResizeMode.ResizeToContents
             )
             monitor.horizontalHeader().setStretchLastSection(True)
-        self.service_table = ServiceTable()
         self.security_panel = SecurityUniversePanel(self.securities, self._select_security_row)
         self.security_table = self.security_panel.table
         tabs.addTab(self.account_monitor, "资金")
         tabs.addTab(self.position_monitor, "持仓")
         tabs.addTab(self.order_monitor, "委托")
-        tabs.addTab(self.service_table, "服务状态")
         tabs.addTab(self.log_monitor, "运行日志")
         content_layout.addWidget(tabs, 4)
 
@@ -513,11 +496,6 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.security_dock.setAllowedAreas(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.security_dock)
 
-        timer = QtCore.QTimer(self)
-        timer.timeout.connect(self.service_table.refresh)
-        timer.start(3000)
-        self.service_timer = timer
-
     def _create_header(self) -> QtWidgets.QWidget:
         header = QtWidgets.QWidget()
         header.setObjectName("header")
@@ -526,18 +504,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(18, 0, 18, 0)
         brand = QtWidgets.QLabel("QuantFabric")
         brand.setObjectName("brand")
-        subtitle = QtWidgets.QLabel("vn.py 交易工作台")
+        subtitle = QtWidgets.QLabel("交易终端")
         subtitle.setObjectName("subBrand")
-        self.trading_mode = QtWidgets.QLabel("C++ 原生会话连接中")
-        self.trading_mode.setObjectName("statusOffline")
-        self.market_status = QtWidgets.QLabel("行情等待中")
-        self.market_status.setObjectName("statusOffline")
-        self.trade_status = QtWidgets.QLabel("账户等待中")
-        self.trade_status.setObjectName("statusOffline")
-        self.server_status = QtWidgets.QLabel("XServer 检测中")
-        self.server_status.setObjectName("statusOffline")
-        self.universe_status = QtWidgets.QLabel(f"证券库 {len(self.securities)} 只")
-        self.universe_status.setObjectName("subBrand")
         self.symbol_selector = QtWidgets.QComboBox()
         self.symbol_selector.setMinimumWidth(210)
         self.symbol_selector.setMaxVisibleItems(20)
@@ -559,20 +527,10 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
         completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         self.symbol_selector.currentIndexChanged.connect(self._select_symbol)
-        refresh = QtWidgets.QPushButton("刷新账户")
-        refresh.setToolTip("重新查询 ATP 资金、持仓、委托和成交")
-        refresh.clicked.connect(self.refresh_account)
         layout.addWidget(brand)
         layout.addWidget(subtitle)
-        layout.addSpacing(16)
-        layout.addWidget(self.trading_mode)
         layout.addStretch()
-        layout.addWidget(self.market_status)
-        layout.addWidget(self.trade_status)
-        layout.addWidget(self.server_status)
-        layout.addWidget(self.universe_status)
         layout.addWidget(self.symbol_selector)
-        layout.addWidget(refresh)
 
         return header
 
@@ -586,7 +544,6 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
 
     def _update_tick_metrics(self, event: Event) -> None:
         tick = event.data
-        self._set_status(self.market_status, "行情在线", True)
         self.ticks[tick.vt_symbol] = tick
         self._update_bar(tick)
         if self.symbol_selector.findData(tick.vt_symbol) < 0:
@@ -616,7 +573,20 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.subscribe_selected()
         if tick:
             self._render_tick_metrics(tick)
+        else:
+            self._clear_selected_market(vt_symbol)
         self._render_chart(vt_symbol)
+
+    def _clear_selected_market(self, vt_symbol: str) -> None:
+        symbol, _ = vt_symbol.rsplit(".", 1)
+        name = self.security_names.get(vt_symbol, symbol)
+        self.last_price.title.setText(f"{symbol} {name} 最新价")
+        self.last_price.value.setText("--")
+        self.change.value.setText("--")
+        self.change.value.setObjectName("metricValue")
+        self.change.value.style().unpolish(self.change.value)
+        self.change.value.style().polish(self.change.value)
+        self.tick_monitor.clearContents()
 
     def subscribe_selected(self) -> None:
         vt_symbol = self.symbol_selector.currentData()
@@ -682,7 +652,6 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
 
     def _update_account_metrics(self, event: Event) -> None:
         account = event.data
-        self._set_status(self.trade_status, "账户在线", True)
         self.balance.value.setText(f"¥ {account.balance:,.2f}")
         self.available.value.setText(f"¥ {account.available:,.2f}")
 
@@ -691,25 +660,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         if data["name"] == "C++原生会话":
             enabled = bool(data["connected"])
             self.trading_panel.set_trading_enabled(enabled)
-            self._set_status(
-                self.trading_mode,
-                "交易模式 · C++风控" if enabled else data["detail"],
-                enabled,
-            )
-            self._set_status(self.server_status, data["detail"], bool(data.get("tcp_connected")))
+            self.statusBar().showMessage("交易会话已连接" if enabled else "交易会话未连接")
             return
-
-    @staticmethod
-    def _set_status(label: QtWidgets.QLabel, text: str, connected: bool) -> None:
-        label.setText(text)
-        label.setObjectName("statusOnline" if connected else "statusOffline")
-        label.style().unpolish(label)
-        label.style().polish(label)
-
-    def refresh_account(self) -> None:
-        gateway = self.main_engine.get_gateway(GATEWAY_NAME)
-        if isinstance(gateway, QuantFabricGateway):
-            gateway.query_all()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.main_engine.close()

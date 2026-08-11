@@ -120,6 +120,7 @@ class NativeTradingTest(unittest.TestCase):
         self.native_client = FakeNativeClient()
         self.gateway.native_client = self.native_client
         self.gateway.orders_enabled = True
+        self.gateway.received_quotes.add("300007.SZSE")
 
     @staticmethod
     def order_request(volume: int = 100) -> OrderRequest:
@@ -139,6 +140,11 @@ class NativeTradingTest(unittest.TestCase):
 
     def test_invalid_lot_size_prevents_order(self) -> None:
         self.assertEqual(self.gateway.send_order(self.order_request(150)), "")
+        self.assertEqual(self.native_client.orders, [])
+
+    def test_missing_quote_prevents_order(self) -> None:
+        self.gateway.received_quotes.clear()
+        self.assertEqual(self.gateway.send_order(self.order_request()), "")
         self.assertEqual(self.native_client.orders, [])
 
     def test_order_maps_to_native_request(self) -> None:
