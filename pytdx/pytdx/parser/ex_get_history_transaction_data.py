@@ -122,7 +122,7 @@ if __name__ == '__main__':
     apiX = TdxExHq_API()
     # with api.connect('121.14.110.210', 7727):
     with apiX.connect('116.205.143.214', 7727): # 扩展市场广州双线1
-    
+
         # print(api.to_df(api.get_history_transaction_data(4, 'SR61099D', 20171025))[["date","price","volume",'zengcang','nature','t1','t2']])
 
         print(apiX.to_df(apiX.get_history_transaction_data(47, 'IFL8', 20251014, 0, 1800)))

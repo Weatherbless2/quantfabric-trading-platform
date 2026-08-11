@@ -26,7 +26,7 @@ class HistoryFinancialListCrawler(BaseCralwer):
 
     def get_url(self, *args, **kwargs):
         return "https://gitee.com/yutiansut/QADATA/raw/master/financial/content.txt"
-    
+
     def get_content(self, reporthook=None, path_to_download=None, proxies=None, chunksize=1024 * 50, *args, **kwargs):
         from pytdx.hq import TdxHq_API
         api = TdxHq_API()
@@ -38,7 +38,7 @@ class HistoryFinancialListCrawler(BaseCralwer):
                 download_file = tempfile.NamedTemporaryFile(delete=True)
             else:
                 download_file = open(path_to_download, 'wb')
-            download_file.write(content)    
+            download_file.write(content)
             download_file.seek(0)
             return download_file
 
@@ -69,7 +69,7 @@ class HistoryFinancialCrawler(BaseCralwer):
 
         return "http://data.yutiansut.com/{}".format(filename)
 
-    
+
     def get_content(self, reporthook=None, path_to_download=None, proxies=None, chunksize=1024 * 50, *args, **kwargs):
         if 'filename' in kwargs:
             filename = kwargs['filename']
@@ -91,7 +91,7 @@ class HistoryFinancialCrawler(BaseCralwer):
                 download_file = tempfile.NamedTemporaryFile(delete=True)
             else:
                 download_file = open(path_to_download, 'wb')
-            download_file.write(content)    
+            download_file.write(content)
             download_file.seek(0)
             return download_file
 
@@ -178,10 +178,10 @@ if __name__ == '__main__':
     print(df["filename"].str.contains("gpcw20190630.zip").any())
 
     # 读取其中一个
-    
+
     # filename = list_data[1]['filename']
     # filesize = list_data[1]["filesize"]
-    
+
     # datacrawler = HistoryFinancialCrawler()
     # pd.set_option('display.max_columns', None)
 

@@ -1,6 +1,6 @@
 # coding=utf-8
 
-    
+
 from OxQuant.pytdx.parser.base import BaseParser
 from OxQuant.pytdx.helper import get_datetime, get_volume, get_price
 from collections import OrderedDict
@@ -12,8 +12,8 @@ class GetHistoryInstrumentBarsRange(BaseParser):
     def __init__(self, *args, **kvargs):
         self.seqid = 1
         BaseParser.__init__(self, *args, **kvargs)
-        
-        
+
+
     def setParams(self, market, code, date,date2):
 
         pkg = bytearray.fromhex('01')
@@ -27,8 +27,8 @@ class GetHistoryInstrumentBarsRange(BaseParser):
         pkg.extend(struct.pack("<II", date, date2))
         #print(hexdump.hexdump(pkg))
         self.send_pkg = pkg
-        
-        
+
+
     def _parse_date(self, num):
         year = num // 2048 + 2004
         month = (num % 2048) // 100
@@ -46,7 +46,7 @@ class GetHistoryInstrumentBarsRange(BaseParser):
 #        fileobj.close()
         #print(hexdump.hexdump(body_buf[0:1024]))
 #        import zlib
-#        d=zlib.decompress(body_buf[16:])        
+#        d=zlib.decompress(body_buf[16:])
 #        print(hexdump.hexdump(d))
         klines=[]
         pos = 12
@@ -60,9 +60,9 @@ class GetHistoryInstrumentBarsRange(BaseParser):
        # print(hexdump.hexdump(body_buf[20: 20+ret_count*32]))
         #global raw_li
         print(ret_count)
-        
+
         for i in range(ret_count):
-            (d1,d2,open_price, high, low, close, position, trade, settlementprice) = struct.unpack("<HHffffIIf", body_buf[pos:pos+32])  
+            (d1,d2,open_price, high, low, close, position, trade, settlementprice) = struct.unpack("<HHffffIIf", body_buf[pos:pos+32])
             #print(raw_li[0])
             pos = pos+ 32
             #print(i)
@@ -92,16 +92,16 @@ class GetHistoryInstrumentBarsRange(BaseParser):
             klines.append(kline)
 
         return klines
-        
-    
-#00000000  01 01 08 6A 01 01 16 00  16 00 FF 23 2F 49 46 4C   ...j.... ...#/IFL 
-#00000010  30 00 F0 F4 94 13 07 00  01 00 00 00 00 00 F0 00   0....... ........ 
-    
-#00000000: 01 01 08 6A 01 01 16 00  16 00 FF 23 4A 4E 56 44  ...j.......#JNVD
-#00000010: 41 00 C0 EC A3 13 07 00  01 00 00 00 00 00 C0 03  A...............    
 
-#00000000  01 01 08 6A 01 01 16 00  16 00 FF 23 2F 49 46 31   ...j.... ...#/IF1 
-#00000010  37 30 39 00 94 13 07 00  01 00 00 00 00 00 F0 00   709..... ........ 
+
+#00000000  01 01 08 6A 01 01 16 00  16 00 FF 23 2F 49 46 4C   ...j.... ...#/IFL
+#00000010  30 00 F0 F4 94 13 07 00  01 00 00 00 00 00 F0 00   0....... ........
+
+#00000000: 01 01 08 6A 01 01 16 00  16 00 FF 23 4A 4E 56 44  ...j.......#JNVD
+#00000010: 41 00 C0 EC A3 13 07 00  01 00 00 00 00 00 C0 03  A...............
+
+#00000000  01 01 08 6A 01 01 16 00  16 00 FF 23 2F 49 46 31   ...j.... ...#/IF1
+#00000010  37 30 39 00 94 13 07 00  01 00 00 00 00 00 F0 00   709..... ........
 
 if __name__ == '__main__':
     import pprint
@@ -113,7 +113,7 @@ if __name__ == '__main__':
         print(x.__len__)
         pprint.pprint(x.tail(100))
 
-        
-        
-        
+
+
+
 

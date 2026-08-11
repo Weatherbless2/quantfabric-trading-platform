@@ -30,7 +30,7 @@ class GetInstrumentInfo(BaseParser):
         pkg = bytearray.fromhex("01 04 48 67 00 01 08 00 08 00 f5 23")
         # pkg.extend(struct.pack('<IHHH', start, count, category, market))
         pkg.extend(struct.pack('<IH', start, count))
-        self.send_pkg = pkg 
+        self.send_pkg = pkg
 
     def parseResponse(self, body_buf):
         pos = 0
@@ -54,7 +54,7 @@ class GetInstrumentInfo(BaseParser):
 
             # if (code[0:1] == '4' or code[0:1] == '9'):
                 # print(f"market={market} code={code} name={name} desc={desc}")
-        
+
 
             one = OrderedDict(
                 [
@@ -101,31 +101,31 @@ if __name__ == '__main__':
             nCurrRows = len(df)
             nTotal += nCurrRows
             print(f"Times: {iCnt}, nCurrRows: {nCurrRows}, Total: {nTotal}")
-            
+
             if nCurrRows > 0:
                 # print(df)
-            
+
                 filter_data = df[df["market"].isin(TARGET_MARKETS)]
                 # print(filter_data)
                 all_data = pd.concat([all_data, filter_data], ignore_index=True)
-            
+
             if nCurrRows < EXT_MAX_RECORD_COUNT:
                 break
-            
+
             end_time = datetime.now()
             print(f"Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
             f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
             f"Elapsed Time(ms): {(end_time - start_time).total_seconds() * 1000:.3f}"
             )
-        
+
         # all_data.drop(columns=['second', 'hour', 'minute'], inplace=True)
         # all_data.set_index('date', inplace=True)
         # all_data.sort_index(inplace=True)
-                
+
         csvFile = os.path.join(os.getcwd(), "data_tdx", "instrument_info.csv")
         all_data.to_csv(csvFile, index=False, encoding='utf-8-sig')
         print(f'All Data[{nTotal} rows]Save In File[{csvFile}]')
-        
+
         end_time = datetime.now()
         print(
             f"Start Time: {init_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "

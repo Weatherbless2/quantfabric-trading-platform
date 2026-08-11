@@ -217,13 +217,13 @@ if __name__ == '__main__':
                     print(df)
                     nTotal += nCurrRows
                     all_data = pd.concat([all_data, df], axis=0)
-                
+
                 if nCurrRows < EXT_MAX_RECORD_COUNT:
                     break
-                
+
                 end_time = datetime.now()
                 print(f"Start Time: {start_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - start_time).total_seconds() * 1000}")
-        
+
         all_data.set_index(['market', 'code'], inplace=True)
         all_data.sort_index(inplace=True)
         csvFile = os.path.join(os.getcwd(), "data_tdx", "EXT_instrument_quote_list.csv")

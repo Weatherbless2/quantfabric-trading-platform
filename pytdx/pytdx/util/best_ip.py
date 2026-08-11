@@ -134,7 +134,7 @@ def select_best_ip(_type='stock'):
 
     Keyword Arguments:
         _type {str} -- [description] (default: {'stock'})
-    
+
     Returns:
         [type] -- [description]
     """
@@ -147,7 +147,7 @@ def select_best_ip(_type='stock'):
         }
     }
     ip_list = stock_ip if _type== 'stock' else future_ip
-    
+
     data = [ping(x['ip'], x['port'], _type) for x in ip_list]
     results = []
     for i in range(len(data)):
@@ -156,7 +156,7 @@ def select_best_ip(_type='stock'):
             results.append((data[i], ip_list[i]))
     # 按照ping值从小大大排序
     results = [x[1] for x in sorted(results, key=lambda x: x[0])]
-    
+
     return results[0]
 
 if __name__ == '__main__':

@@ -97,7 +97,7 @@ if __name__ == '__main__':
     import pandas as pd
     from datetime import datetime
     import os
-    
+
     api = TdxExHq_API(raise_exception=True)
     init_time = datetime.now()
     # cmd.setParams(4, 7, "10000843", 0, 10)
@@ -111,7 +111,7 @@ if __name__ == '__main__':
         nCurrRows = 0
         all_data = pd.DataFrame()
         end_time = datetime.now()
-        
+
         # 合约/标的代码，K线分类，市场类型
         # symbol = 'IFL8' # 沪深主连 代码
         symbol = 'HSIL8' # 沪深主连 代码
@@ -120,7 +120,7 @@ if __name__ == '__main__':
         EXT_MAX_RECORD_COUNT = 700  # 每次获取的最大记录数700条，每个接口一般不一样
 
         print(f"Start Time: {init_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - init_time).total_seconds() * 1000}")
-        
+
         while True:
             start_time = datetime.now()
             # df = pd.DataFrame(api.get_instrument_bars(9, 47, 'IFL8', iCnt * 700, 700)) # 沪深主连
@@ -136,10 +136,10 @@ if __name__ == '__main__':
                 all_data = pd.concat([all_data, df], axis=0)
                 print(df)
                 # 每次获取数据后都添加到all_data中，而不是只在nCurrRows < 700不成立时添加
-            
+
             if nCurrRows < EXT_MAX_RECORD_COUNT:
                 break
-            
+
             end_time = datetime.now()
             print(f"Start Time: {start_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - start_time).total_seconds() * 1000}")
 

@@ -29,10 +29,10 @@ class BaseCralwer:
         :return: 解析之后的数据结果
         """
         if (self.mode == "http"):
-            download_file = self.fetch_via_http(reporthook=reporthook, path_to_download=path_to_download, proxies=proxies, chunksize=chunksize, *args, **kwargs) 
+            download_file = self.fetch_via_http(reporthook=reporthook, path_to_download=path_to_download, proxies=proxies, chunksize=chunksize, *args, **kwargs)
         else:
             download_file = self.get_content(reporthook=reporthook, path_to_download=path_to_download, chunksize=chunksize, *args, **kwargs);
-        
+
         result =  self.parse(download_file, *args, **kwargs)
         try:
             download_file.close()
@@ -80,7 +80,7 @@ class BaseCralwer:
 
     def get_url(self, *args, **kwargs):
         raise NotImplementedError("will impl in subclass")
-    
+
     def get_content(self, reporthook = None, path_to_download=None, proxies=None, chunksize=1024 * 50, *args, **kwargs):
         raise NotImplementedError("will impl in subclass")
 

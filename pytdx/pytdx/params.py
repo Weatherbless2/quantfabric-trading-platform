@@ -33,7 +33,7 @@ class TDXParams:
                             # 11 交叉汇率 FX
 
     CATEGORY_EX_INDEX = 5   # 指数
-                            # 12 国际指数 WI  
+                            # 12 国际指数 WI
                             # 27 香港指数 FH
                             # 62 中证指数 ZZ
                             # 68 风控指数 TZ

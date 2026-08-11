@@ -147,7 +147,7 @@ if __name__ == '__main__':
     # print(cmd.send_pkg)
     # 116.205.143.214
     with api.connect('116.205.143.214', 7727):
-        
+
         end_time = datetime.now()
         symbol = 'IFL8' # 沪深主连 代码
         print(f"Start Time: {init_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - init_time).total_seconds() * 1000}")
@@ -160,7 +160,7 @@ if __name__ == '__main__':
         end_time = datetime.now()
         print(f"Start Time: {start_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - start_time).total_seconds() * 1000}")
 
-        
+
         csvFile = os.path.join(os.getcwd(), "data_tdx", f"{symbol}_instrument_quote.csv")
         df.to_csv(csvFile, index=False, encoding='utf-8-sig')
         print(f'All Data File Save in[{csvFile}]')

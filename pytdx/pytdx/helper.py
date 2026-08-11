@@ -148,7 +148,7 @@ def decode_bytes(byte_data: bytes, encoding:str ='utf-8'):
                 return byte_data.decode("gbk").rstrip("\x00")
             else:
                 return byte_data.decode("utf-8").rstrip("\x00")
-            
+
         except UnicodeDecodeError as e:
             # 两种编码都失败，打印异常信息
             print(f"解码失败：无法用utf-8或gbk解码。错误信息：{str(e)}")
@@ -167,7 +167,7 @@ def decode_bytes_safely(byte_data: bytes, encoding:str ='utf-8', tail: bool = Fa
     # if not byte_data or isinstance(byte_data, bytes):
     if not byte_data:
         return ""
-    
+
     # 尝试直接解码
     try:
         return byte_data.decode(encoding)
@@ -175,13 +175,13 @@ def decode_bytes_safely(byte_data: bytes, encoding:str ='utf-8', tail: bool = Fa
         # 解码失败，说明存在截断，逐步剔除末尾字节重试
         # 根据编码特性设置最大尝试剔除的字节数（UTF-8最多3字节/字符，GBK最多2字节）
         max_trim = 3 if encoding.lower() in ['utf-8', 'utf8'] else 2
-        
+
         for i in range(1, min(max_trim + 1, len(byte_data) + 1)):
             try:
                 # 剔除末尾i个字节后重试
                 return byte_data[:-i].decode(encoding, 'ignore' if tail else 'replace')
             except UnicodeDecodeError:
                 continue
-        
+
         # 所有尝试失败，返回原始字节的repr（或空字符串，根据需求调整）
         return f"[解码失败] 原始字节: {repr(byte_data)}"

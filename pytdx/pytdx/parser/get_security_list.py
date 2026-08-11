@@ -68,7 +68,7 @@ if __name__ == '__main__':
     import pandas as pd
     from datetime import datetime
     import os
-    
+
     api = TdxHq_API(raise_exception=True)
     init_time = datetime.now()
 
@@ -87,8 +87,8 @@ if __name__ == '__main__':
 
         # 创建一个包含数字3-9和字母a-z的列表
         # markets_to_test = list(range(3, 10)) + [chr(c) for c in range(ord('a'), ord('z') + 1)]
-        
-        # for mkt in markets_to_test:     
+
+        # for mkt in markets_to_test:
         #     # 如果是字符串，使用ord()转换为ASCII码；如果是数字，直接使用
         #     market = ord(mkt) if isinstance(mkt, str) else mkt
         #     print(f"Testing market: {market}")
@@ -103,10 +103,10 @@ if __name__ == '__main__':
 
 
         print(f"Start Time: {init_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - init_time).total_seconds() * 1000}")
-            
+
         for iCnt in range(100):
             start_time = datetime.now()
-            
+
             df = pd.DataFrame(api.get_security_list(market,  iCnt*1000))
             # print(df)
             if df is not None and len(df) > 0:
@@ -118,7 +118,7 @@ if __name__ == '__main__':
 
             print(f"Times: {iCnt}, nCurrRows: {nCurrRows}, Total: {nTotal}")
 
-            
+
         end_time = datetime.now()
         print(f"Start Time: {start_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - start_time).total_seconds() * 1000}")
 
@@ -126,11 +126,11 @@ if __name__ == '__main__':
 
         # 检查all_data是否为空并且包含datetime列
         # all_data.drop(columns=['year', 'month', 'day', 'hour', 'minute'], inplace=True)
-        
+
         # 根据code列排序
         all_data['code'] = '\t' + all_data['code']
         all_data.sort_values('code', inplace=True)
-        
+
         csvFile = os.path.join(os.getcwd(), "data_tdx", f"{'sh' if market==1 else 'sz' if market==0 else 'bj'}_security_list.csv")
         all_data.to_csv(csvFile, index=False, encoding='utf-8-sig')
         print(f'All Data [rows={nTotal}] Save In File [{csvFile}]')

@@ -22,7 +22,7 @@ class GetInstrumentCount(BaseParser):
 
 if __name__ == '__main__':
     from OxQuant.pytdx.exhq import TdxExHq_API
-    
+
     apiX = TdxExHq_API()
     # api.connect('120.25.218.6', 7727) # 扩展市场深圳主站
     # with apiX.connect('112.74.214.43', 7727): # 扩展市场深圳双线1

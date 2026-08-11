@@ -16,7 +16,7 @@ class GetMarkets(BaseParser):
         pos = 0
         (cnt, ) = struct.unpack("<H", body_buf[pos: pos + 2])
         print(f"返回记录数：{cnt}")
-    
+
         pos += 2
 
         result = []
@@ -44,7 +44,7 @@ class GetMarkets(BaseParser):
         return result
 
 if __name__ == '__main__':
-    
+
     from OxQuant.pytdx.exhq import TdxExHq_API
     import pandas as pd
     from datetime import datetime

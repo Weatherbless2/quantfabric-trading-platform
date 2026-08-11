@@ -54,7 +54,7 @@ class GetMinuteTimeData(BaseParser):
             ]))
 
         return result
-    
+
 EXT_MAX_RECORD_COUNT = 1800
 if __name__ == "__main__":
     from OxQuant.pytdx.exhq import TdxExHq_API
@@ -85,12 +85,12 @@ if __name__ == "__main__":
                 print(df)
                 nTotal += nCurrRows
                 all_data = pd.concat([all_data, df], axis=0)
-            
+
             if nCurrRows < EXT_MAX_RECORD_COUNT:
                 break
             end_time = datetime.now()
             print(f"Start Time: {start_time}, End Time: {end_time}, Elapsed Time(ms): {(end_time - start_time).total_seconds() * 1000}")
-        
+
         all_data['time'] = all_data.apply(
             lambda row: f"{int(row['hour']):02d}:{int(row['minute']):02d}:00",
             axis=1
