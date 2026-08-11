@@ -1,0 +1,105 @@
+# 目标架构：C++ Qt 直连交易核心
+
+本文件是项目后续实现的唯一目标架构说明。它遵循当前范围：C++ Qt 桌面端、简单的用户/菜单/账户权限、Casbin 鉴权，以及不使用 Redis 的本地部署。
+
+```mermaid
+flowchart TB
+    subgraph Desktop["桌面端：C++ Qt"]
+        QtTrader["QtTrader（规划）<br/>行情、K线、下单、撤单、委托与回报"]
+        QtAdmin["QtAdmin（规划）<br/>用户、菜单、角色、账户授权、审计查看"]
+    end
+
+    subgraph Auth["权限控制面：Python 服务"]
+        AuthAdmin["AuthAdminService<br/>登录、短会话、Casbin 校验"]
+        Policy["权限模型<br/>用户 -> 菜单<br/>用户 -> 账户 -> 动作"]
+        AuthDB[("权限数据<br/>开发：SQLite<br/>团队部署：一套 PostgreSQL")]
+        AuthAdmin --> Policy
+        AuthAdmin --> AuthDB
+    end
+
+    subgraph Core["QuantFabric C++ 交易核心"]
+        XServer["XServer<br/>客户端会话、账户权限、协议入口"]
+        XWatcher["XWatcher<br/>转发与监控"]
+        XRiskJudge["XRiskJudge<br/>交易风控"]
+        XTrader["XTrader<br/>交易柜台网关"]
+        XMarketCenter["XMarketCenter<br/>行情网关"]
+        SharedMemory["共享内存<br/>核心进程 IPC"]
+        XQuant["XQuant（后续可选）<br/>策略引擎"]
+    end
+
+    subgraph External["外部来源"]
+        PyTdx["pytdx 行情适配"]
+        ATP["ATP 模拟/测试柜台"]
+    end
+
+    QtAdmin -->|"HTTP：管理 API"| AuthAdmin
+    QtTrader -->|"HTTP：登录并取得短会话"| AuthAdmin
+    QtTrader <-->|"HPSocket + PackMessage<br/>C++ Qt 直接连接"| XServer
+    XServer -->|"内部 HTTP：会话与账户动作校验"| AuthAdmin
+
+    PyTdx -->|"行情"| XMarketCenter
+    XMarketCenter -->|"行情推送"| XWatcher
+    XMarketCenter --> SharedMemory
+    SharedMemory -.-> XQuant
+    XWatcher -->|"行情、委托、成交、资金、持仓回报"| XServer
+
+    XServer -->|"下单、撤单"| XWatcher
+    XWatcher --> XRiskJudge
+    XRiskJudge --> XTrader
+    XTrader <-->|"柜台 API"| ATP
+    XTrader -->|"订单、成交、资金、持仓回报"| XWatcher
+```
+
+## 架构边界
+
+| 区域 | 责任 | 不能做的事 |
+|---|---|---|
+| `QtTrader` | 展示行情与交易状态，发起订阅、下单和撤单 | 不直接访问数据库，不绕过 XServer，不自行放行订单 |
+| `QtAdmin` | 管理用户、菜单、角色、账户授权，查看审计记录 | 不连接交易柜台，不直接改风控状态 |
+| `AuthAdminService` | 校验用户名密码，签发短会话，执行 Casbin 与账户授权判断 | 不处理行情，不保存交易状态，不替代交易风控 |
+| `XServer` | 接收 C++ Qt 客户端协议，验证会话和账户权限，转发核心事件 | 不承载 Qt 界面逻辑，不直接操作 PostgreSQL 业务表 |
+| `XWatcher`、`XRiskJudge`、`XTrader` | 交易路由、风险检查、柜台接入与交易回报 | 不信任客户端传来的“已授权”结论 |
+| `XMarketCenter` | 接收外部行情并向核心和客户端分发 | 不允许把行情线程阻塞在 Qt 或数据库操作上 |
+
+## 三条关键流程
+
+### 1. 登录与权限
+
+1. QtTrader 或 QtAdmin 向 AuthAdminService 提交账号和密码。
+2. AuthAdminService 查询用户、菜单、账户授权和 Casbin 规则，返回可用菜单、可操作账户与短会话 ID。
+3. QtTrader 用短会话 ID 通过 PackMessage 登录 XServer。
+4. XServer 在订阅、下单、撤单和读取账户数据时，向 AuthAdminService 进行服务端校验。
+
+客户端得到会话 ID 不代表永久授权。关键交易动作必须由 XServer 再次校验。
+
+### 2. 行情
+
+`pytdx -> XMarketCenter -> XWatcher -> XServer -> QtTrader`
+
+XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用。策略引擎不属于当前第一阶段交付范围。
+
+### 3. 下单与回报
+
+`QtTrader -> XServer -> XWatcher -> XRiskJudge -> XTrader -> ATP`
+
+订单、成交、资金和持仓回报沿 `XTrader -> XWatcher -> XServer -> QtTrader` 返回。QtTrader 只能展示状态，不能把“已成交”或“已撤单”写死在界面上。
+
+## 当前不做
+
+- 不保留桌面端 Python/C++ 中间进程或原生绑定层。
+- 不把 Python 的 GUI、行情研究工具或策略框架放入人工交易主链路。
+- 不使用 Redis、Keycloak、审批流、多租户和复杂的权限树。
+- 不让 Qt 客户端直连 PostgreSQL，也不让客户端直接调用 ATP。
+
+## 实现顺序
+
+1. 固定权限数据模型：用户、角色、菜单、用户账户授权、Casbin 规则和审计日志。
+2. 完成 AuthAdminService 的开发模式登录、会话、菜单查询和账户动作校验。
+3. 新建 QtAdmin：先实现用户列表、菜单权限、账户授权和审计查看。
+4. 在现有 `XMonitor` 的 C++ Qt 客户端模式上实现 QtTrader 的 `XServerSession`：连接、登录、重连与事件分发必须在工作线程中运行。
+5. 实现 QtTrader 的行情表、K 线、委托表、成交表、资金与持仓；全部使用 `QAbstractTableModel + QTableView`。
+6. 最后接入下单、撤单和交易回报状态机，再用 ATP 测试柜台完成模拟验证。
+
+## 现状与目标
+
+当前仓库已有 QuantFabric C++ 核心和 AuthAdminService。本次已删除不符合目标的 Python 桌面客户端和 Python/C++ 绑定模块。`QtTrader` 与 `QtAdmin` 仍是后续要新建的 C++ Qt 子项目；在它们完成前，不能把本仓库描述为已有完整桌面交易端。

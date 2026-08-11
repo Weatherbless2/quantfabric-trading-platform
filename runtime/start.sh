@@ -41,8 +41,8 @@ if [[ ! -f "${config_dir}/AuthAdmin.env" ]]; then
     printf 'authorization configuration is missing; run runtime/prepare.sh first\n' >&2
     exit 1
 fi
-if [[ ! -x "${repo_root}/.vnpy-venv/bin/python" ]]; then
-    printf 'authorization Python environment is missing; install VnpyMonitor/requirements.txt first\n' >&2
+if [[ ! -x "${repo_root}/.auth-venv/bin/python" ]]; then
+    printf 'authorization Python environment is missing; install AuthAdminService/requirements.txt first\n' >&2
     exit 1
 fi
 
@@ -116,7 +116,7 @@ wait_for_http() {
 
 components=(AuthAdmin XServer XWatcher XRiskJudge XTrader XMarketCenter XQuant)
 start_component AuthAdmin \
-    env "PYTHONPATH=${repo_root}" "${repo_root}/.vnpy-venv/bin/python" -m uvicorn \
+    env "PYTHONPATH=${repo_root}" "${repo_root}/.auth-venv/bin/python" -m uvicorn \
     AuthAdminService.app:app --host 127.0.0.1 --port 18080
 wait_for_http AuthAdmin "http://127.0.0.1:18080/healthz"
 if [[ "${mode}" != "test" ]]; then

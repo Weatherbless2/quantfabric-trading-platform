@@ -7,6 +7,7 @@
 # 架构文档
 
 - [系统总体架构](architecture/SystemArchitecture.md)
+- [目标架构：C++ Qt 直连交易核心](architecture/TargetArchitecture.md)
 
 ---
 
