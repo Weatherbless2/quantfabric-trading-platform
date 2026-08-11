@@ -45,7 +45,7 @@ by Git.
 cmake -S . -B build
 cmake --build build --target \
     XServer_0.9.0 XWatcher_0.4.0 XRiskJudge_0.9.3 XTrader_0.9.3 \
-    XMarketCenter_0.9.3 XQuant_0.1.0 \
+    XMarketCenter_0.9.3 XQuant_0.1.0 QtAdmin_0.1.0 \
     -j"$(nproc)"
 ```
 

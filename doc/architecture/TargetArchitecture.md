@@ -6,7 +6,7 @@
 flowchart TB
     subgraph Desktop["桌面端：C++ Qt"]
         QtTrader["QtTrader（规划）<br/>行情、K线、下单、撤单、委托与回报"]
-        QtAdmin["QtAdmin（规划）<br/>用户、菜单、角色、账户授权、审计查看"]
+        QtAdmin["QtAdmin<br/>用户、菜单、角色、账户授权、审计查看"]
     end
 
     subgraph Auth["权限控制面：Python 服务"]
@@ -95,11 +95,11 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 
 1. 固定权限数据模型：用户、角色、菜单、用户账户授权、Casbin 规则和审计日志。
 2. 完成 AuthAdminService 的开发模式登录、会话、菜单查询和账户动作校验。
-3. 新建 QtAdmin：先实现用户列表、菜单权限、账户授权和审计查看。
+3. 完成 QtAdmin：已实现用户、菜单、角色绑定、账户授权和审计查看；后续补充编辑、禁用和删除操作。
 4. 在现有 `XMonitor` 的 C++ Qt 客户端模式上实现 QtTrader 的 `XServerSession`：连接、登录、重连与事件分发必须在工作线程中运行。
 5. 实现 QtTrader 的行情表、K 线、委托表、成交表、资金与持仓；全部使用 `QAbstractTableModel + QTableView`。
 6. 最后接入下单、撤单和交易回报状态机，再用 ATP 测试柜台完成模拟验证。
 
 ## 现状与目标
 
-当前仓库已有 QuantFabric C++ 核心和 AuthAdminService。本次已删除不符合目标的 Python 桌面客户端和 Python/C++ 绑定模块。`QtTrader` 与 `QtAdmin` 仍是后续要新建的 C++ Qt 子项目；在它们完成前，不能把本仓库描述为已有完整桌面交易端。
+当前仓库已有 QuantFabric C++ 核心、AuthAdminService 和 `QtAdmin`。本次已删除不符合目标的 Python 桌面客户端和 Python/C++ 绑定模块。`QtTrader` 仍是后续要新建的 C++ Qt 子项目；在它完成前，不能把本仓库描述为已有完整桌面交易端。
