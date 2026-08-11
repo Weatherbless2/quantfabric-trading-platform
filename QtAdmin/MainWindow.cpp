@@ -128,11 +128,13 @@ void MainWindow::createAdminPages()
     m_identities = makeTable({QStringLiteral("主体"), QStringLiteral("用户名"), QStringLiteral("显示名"), QStringLiteral("启用")}, m_tabs);
     m_menus = makeTable({QStringLiteral("菜单"), QStringLiteral("名称"), QStringLiteral("父菜单"), QStringLiteral("资源"), QStringLiteral("动作"), QStringLiteral("排序"), QStringLiteral("启用")}, m_tabs);
     m_roleBindings = makeTable({QStringLiteral("用户/主体"), QStringLiteral("角色"), QStringLiteral("域")}, m_tabs);
+    m_policies = makeTable({QStringLiteral("用户/角色"), QStringLiteral("域"), QStringLiteral("资源"), QStringLiteral("动作")}, m_tabs);
     m_accountGrants = makeTable({QStringLiteral("编号"), QStringLiteral("用户/角色"), QStringLiteral("域"), QStringLiteral("账户"), QStringLiteral("动作"), QStringLiteral("启用")}, m_tabs);
     m_audit = makeTable({QStringLiteral("时间"), QStringLiteral("主体"), QStringLiteral("动作"), QStringLiteral("资源"), QStringLiteral("结果"), QStringLiteral("跟踪号")}, m_tabs);
     m_tabs->addTab(m_identities, QStringLiteral("用户"));
     m_tabs->addTab(m_menus, QStringLiteral("菜单"));
     m_tabs->addTab(m_roleBindings, QStringLiteral("角色"));
+    m_tabs->addTab(m_policies, QStringLiteral("策略"));
     m_tabs->addTab(m_accountGrants, QStringLiteral("账户授权"));
     m_tabs->addTab(m_audit, QStringLiteral("审计"));
     setCentralWidget(m_tabs);
@@ -142,11 +144,13 @@ void MainWindow::createAdminPages()
     auto* addUser = toolbar->addAction(QStringLiteral("新增用户"));
     auto* addMenu = toolbar->addAction(QStringLiteral("新增菜单"));
     auto* addRole = toolbar->addAction(QStringLiteral("绑定角色"));
+    auto* addPolicy = toolbar->addAction(QStringLiteral("新增策略"));
     auto* addGrant = toolbar->addAction(QStringLiteral("账户授权"));
     connect(refresh, &QAction::triggered, this, [this] { refreshAll(); });
     connect(addUser, &QAction::triggered, this, [this] { createIdentity(); });
     connect(addMenu, &QAction::triggered, this, [this] { createMenu(); });
     connect(addRole, &QAction::triggered, this, [this] { createRoleBinding(); });
+    connect(addPolicy, &QAction::triggered, this, [this] { createPolicy(); });
     connect(addGrant, &QAction::triggered, this, [this] { createAccountGrant(); });
 }
 
@@ -212,6 +216,7 @@ void MainWindow::refreshAll()
     refreshIdentities();
     refreshMenus();
     refreshRoleBindings();
+    refreshPolicies();
     refreshAccountGrants();
     refreshAudit();
 }
@@ -242,6 +247,23 @@ void MainWindow::refreshRoleBindings()
             for(int column = 0; column < item.size(); ++column)
             {
                 m_roleBindings->setItem(row, column, new QTableWidgetItem(item[column].toString()));
+            }
+        }
+    });
+}
+
+void MainWindow::refreshPolicies()
+{
+    request("GET", QStringLiteral("/v1/admin/policies"), {}, [this](const QJsonDocument& doc) {
+        m_policies->setRowCount(0);
+        const QJsonArray items = doc.object().value("items").toArray();
+        m_policies->setRowCount(items.size());
+        for(int row = 0; row < items.size(); ++row)
+        {
+            const QJsonArray item = items[row].toArray();
+            for(int column = 0; column < item.size(); ++column)
+            {
+                m_policies->setItem(row, column, new QTableWidgetItem(item[column].toString()));
             }
         }
     });
@@ -301,6 +323,19 @@ void MainWindow::createRoleBinding()
     if(values.isEmpty()) return;
     request("POST", QStringLiteral("/v1/admin/role-bindings"), QJsonDocument(values),
             [this](const QJsonDocument&) { refreshRoleBindings(); });
+}
+
+void MainWindow::createPolicy()
+{
+    const QJsonObject values = dialogValues(this, QStringLiteral("新增授权策略"), {
+        {QStringLiteral("用户或角色"), "subject"}, {QStringLiteral("域"), "domain"},
+        {QStringLiteral("资源"), "resource"}, {QStringLiteral("动作"), "action"},
+    });
+    if(values.isEmpty()) return;
+    request("POST", QStringLiteral("/v1/admin/policies"), QJsonDocument(values), [this](const QJsonDocument&) {
+        refreshPolicies();
+        refreshAudit();
+    });
 }
 
 void MainWindow::createAccountGrant()

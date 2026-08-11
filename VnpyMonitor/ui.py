@@ -369,7 +369,8 @@ class TradingPanel(QtWidgets.QWidget):
         answer = QtWidgets.QMessageBox.question(
             self,
             "确认委托",
-            f"{side} {symbol}，限价 {price:.2f}，数量 {volume} 股？\n订单将经过 C++ 风控后发送至 ATP 柜台。",
+            f"{side} {symbol}，限价 {price:.2f}，数量 {volume} 股？\n"
+            "订单将经过 C++ 风控后发送至当前柜台适配器。",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
         )

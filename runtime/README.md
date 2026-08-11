@@ -63,6 +63,10 @@ Start the safe local test chain first:
 
 The script starts `AuthAdmin`, `XServer`, `XWatcher`, `XRiskJudge`, `XTrader`,
 `XMarketCenter`, and `XQuant`. `AuthAdmin` listens on `127.0.0.1:18080`.
+The first `XMarketCenter` start may take up to two minutes while its 256 shared
+memory publishing channels are initialized. In `test` mode it publishes local
+A-share simulation data and `TestTrader` returns simulated fills; neither
+pytdx nor ATP is contacted.
 
 Start the desktop programs from separate terminals after the test chain is
 ready:
@@ -90,6 +94,11 @@ passes it to its in-process C++ native client for the `XServer` protocol.
 the session and account permission with `AuthAdminService` before it forwards
 market subscriptions, order requests, or cancellation requests to the C++
 core.
+
+`QtAdmin` is the source of users and Casbin rules. It does not directly embed
+or control the trading workbench: after changing a user's permissions, start a
+new VnpyMonitor session with `--user`, `--password`, and `--account` so XServer
+can validate the new short session.
 
 The planned implementation order is documented in
 `doc/architecture/TargetArchitecture.md`.

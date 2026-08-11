@@ -1,9 +1,9 @@
 XQuantConfig:
   XWatcherIP: 127.0.0.1
   XWatcherPort: 8001
-  StrategyName: TestStrategy
+  StrategyName: StockReadOnlyStrategy
   AccountList: 188795
-  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerList.yml
+  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerListStock.yml
   MarketServerName: MarketServer
   OrderServerName: OrderServer
   CPUSET: -1

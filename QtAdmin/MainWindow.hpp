@@ -26,11 +26,13 @@ private:
     void refreshIdentities();
     void refreshMenus();
     void refreshRoleBindings();
+    void refreshPolicies();
     void refreshAccountGrants();
     void refreshAudit();
     void createIdentity();
     void createMenu();
     void createRoleBinding();
+    void createPolicy();
     void createAccountGrant();
     void request(const QByteArray& method, const QString& path, const QJsonDocument& body,
                  const std::function<void(const QJsonDocument&)>& onSuccess);
@@ -46,6 +48,7 @@ private:
     QTableWidget* m_identities = nullptr;
     QTableWidget* m_menus = nullptr;
     QTableWidget* m_roleBindings = nullptr;
+    QTableWidget* m_policies = nullptr;
     QTableWidget* m_accountGrants = nullptr;
     QTableWidget* m_audit = nullptr;
 };

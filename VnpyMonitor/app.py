@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -22,6 +23,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="QuantFabric vn.py 交易工作台")
     parser.add_argument("--screenshot", type=Path, help="启动后保存界面截图并退出")
     parser.add_argument("--screenshot-delay", type=int, default=5000, help="截图等待毫秒数")
+    parser.add_argument("--user", default=os.getenv("QF_VNPY_USER", "admin"),
+                        help="AuthAdminService 操作员用户名")
+    parser.add_argument("--password", default=os.getenv("QF_VNPY_PASSWORD", "123456"),
+                        help="AuthAdminService 操作员密码")
+    parser.add_argument("--account", default=os.getenv("QF_VNPY_ACCOUNT", "188795"),
+                        help="本次会话申请使用的资金账户")
+    parser.add_argument("--auth-url", default=os.getenv("QF_VNPY_AUTH_URL", "http://127.0.0.1:18080"),
+                        help="AuthAdminService 地址")
     args = parser.parse_args()
 
     qapp = create_qapp("QuantFabric vn.py")
@@ -34,7 +43,16 @@ def main() -> int:
 
     window = WorkbenchWindow(main_engine, event_engine)
     window.show()
-    main_engine.connect(QuantFabricGateway.default_setting.copy(), GATEWAY_NAME)
+    # QtAdmin 创建的用户在这里成为实际交易会话的身份；XServer 会以短会话而非
+    # 本地用户表验证该身份，并在订阅、下单和撤单时再次调用 Casbin。
+    connection_setting = QuantFabricGateway.default_setting.copy()
+    connection_setting.update({
+        "用户": args.user,
+        "密码": args.password,
+        "资金账号": args.account,
+        "认证服务地址": args.auth_url,
+    })
+    main_engine.connect(connection_setting, GATEWAY_NAME)
     window.subscribe_selected()
 
     if args.screenshot:

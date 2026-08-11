@@ -46,9 +46,42 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 本地开发使用 `admin` / `123456` 向 AuthAdminService 换取短会话。桌面密码不会写入
 XServer 的 PackMessage 登录包。默认账户 `188795` 与 `TestTrader` 测试链路对应。
 
-预期顶部显示“交易模式 · C++风控”。测试模式只验证前端、会话、权限和 C++ 核心
-链路，不连接 pytdx 或 ATP；真实行情、全量证券库和账户回报需在后续通过
-`real-readonly` 完成独立验收。
+预期顶部显示“交易模式 · C++风控”和“行情在线”。`test` 使用
+`TickerListStock.yml` 中的六只 A 股模拟五档行情；`TestTrader` 对通过风控的委托
+产生模拟全成、资金和持仓回报。它不连接 pytdx、ATP 或真实柜台，不能用于真实交易。
+
+## 权限后台到交易工作台的操作链路
+
+`QtAdmin` 和交易工作台不是两个相互嵌套的页面。它们通过
+`AuthAdminService` 协作，关键动作仍由 XServer 二次校验：
+
+```text
+QtAdmin 创建用户/策略/账户授权
+    -> AuthAdminService + Casbin
+    -> VnpyMonitor 用该用户登录取得短会话
+    -> XServer 在订阅、读账户、下单、撤单时再次请求 Casbin
+```
+
+1. 启动 `./build/QtAdmin_0.1.0`，以 `admin` / `123456` 登录。
+2. 在“用户”中新建操作员；用户名为 `alice` 时，Casbin 主体写作 `user:alice`。
+3. 在“策略”中新增该用户的行情规则，例如：域 `desk:cn_equity`、资源
+   `market/SZSE/instrument/300007`、动作 `market:subscribe`。
+4. 在“账户授权”中为 `user:alice`、账户 `188795` 依次授予 `account:read`、
+   `order:read`、`order:create`、`order:cancel`。
+5. 在新终端以该操作员启动工作台：
+
+```bash
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app \
+  --user alice --password '用户创建时设置的密码' --account 188795
+```
+
+未配置行情策略时订阅会被拒绝；未配置 `order:create` 时下单会被拒绝。结果均会出现在
+QtAdmin 的“审计”页和 XServer 日志中。已运行的桌面会话保留其短会话，权限变更后应
+关闭并重新登录工作台，以取得新的会话并避免将旧界面状态误认为新授权结果。
+
+`--user`、`--password`、`--account`、`--auth-url` 也可分别使用
+`QF_VNPY_USER`、`QF_VNPY_PASSWORD`、`QF_VNPY_ACCOUNT`、`QF_VNPY_AUTH_URL`
+环境变量设置。
 
 ## 当前功能
 

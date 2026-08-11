@@ -54,6 +54,12 @@ flowchart TB
 
 ## 架构边界
 
+> 架构图版本说明：附件中的规划图把交易桌面端命名为 C++ Qt 的 `QtTrader`。当前仓库
+> 已实现的是 `VnpyMonitor`（vn.py Qt）加进程内 `quantfabric_native` C++ 客户端；它与
+> 规划图使用相同的 `HPSocket + PackMessage -> XServer` 边界，但不是 C++ Qt QtTrader。
+> `QtAdmin` 已是 C++ Qt。若最终交付必须严格采用图中的 C++ Qt QtTrader，需要单独
+> 立项迁移桌面展示层，不能把当前 vn.py 实现误称为已完成该迁移。
+
 | 区域 | 责任 | 不能做的事 |
 |---|---|---|
 | `VnpyMonitor` | 展示行情与交易状态，发起订阅、下单和撤单 | 不直接访问数据库，不绕过 XServer，不自行放行订单 |
@@ -97,11 +103,11 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 
 1. 固定权限数据模型：用户、角色、菜单、用户账户授权、Casbin 规则和审计日志。
 2. 完成 AuthAdminService 的开发模式登录、会话、菜单查询和账户动作校验。
-3. 完成 QtAdmin：已实现用户、菜单、角色绑定、账户授权和审计查看；后续补充编辑、禁用和删除操作。
-4. 完成 VnpyMonitor 与 `quantfabric_native`：短会话、原生连接、行情/资金/持仓/订单事件映射已接入；连接重试和配置编辑仍需继续收敛。
+3. 完成 QtAdmin：已实现用户、菜单、角色绑定、Casbin 策略、账户授权和审计查看；后续补充编辑、禁用和删除操作。
+4. 完成 VnpyMonitor 与 `quantfabric_native`：短会话、原生连接、行情/资金/持仓/订单事件映射已接入；工作台可用 `--user`、`--password`、`--account` 使用 QtAdmin 创建的操作员身份登录。
 5. 完善 VnpyMonitor 的全量行情、K 线、委托表、成交表、资金与持仓；界面基于 vn.py 标准监控组件。
 6. 最后接入下单、撤单和交易回报状态机，再用 ATP 测试柜台完成模拟验证。
 
 ## 现状与目标
 
-当前仓库已有 QuantFabric C++ 核心、AuthAdminService、`QtAdmin`，以及 vn.py `VnpyMonitor` 和进程内 `quantfabric_native` 客户端。全量行情、历史 K 线、订单状态机和完整交易验收仍未完成，不能把本仓库描述为已有完整生产桌面交易端。
+当前仓库已有 QuantFabric C++ 核心、AuthAdminService、`QtAdmin`，以及 vn.py `VnpyMonitor` 和进程内 `quantfabric_native` 客户端。`test` 已能验证 A 股模拟行情、会话鉴权、股票风控、模拟成交、资金和持仓回报；全量行情、历史 K 线、真实 ATP 订单状态机和完整交易验收仍未完成，不能把本仓库描述为已有完整生产桌面交易端。

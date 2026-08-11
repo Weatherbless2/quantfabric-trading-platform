@@ -88,6 +88,11 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 `http://127.0.0.1:18080`。`XMonitor/build/QtTrader_0.1.0` 是历史 Fabric
 监控界面，不是当前 vn.py 交易前端。
 
+`test` 是本地 A 股模拟链路：六只股票的五档行情经过 XMarketCenter，手工委托经过
+XServer、XRiskJudge 与 TestTrader 后返回模拟成交、资金和持仓。它不连接 pytdx、ATP
+或真实柜台。权限后台的实际操作方式见
+[VnpyMonitor/README.md](VnpyMonitor/README.md)。
+
 停止服务：
 
 ```bash
