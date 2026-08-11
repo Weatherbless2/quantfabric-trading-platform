@@ -10,4 +10,7 @@ __pycache__/
 .*venv/
 /AtpTraderOfGuosen(1)/data/
 /AtpTraderOfGuosen(1)/log/
+# Broker SDK binaries and local test exports are provisioned outside Git.
+/AtpTraderOfGuosen(1)/
+/01init_tables.rar
 /pytdx/**/__pycache__/
