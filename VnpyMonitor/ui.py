@@ -228,6 +228,16 @@ class SecurityUniversePanel(QtWidgets.QWidget):
 class VisibleCandleItem(CandleItem):
     """在只有一根或平盘 Bar 时仍提供可绘制的纵轴范围。"""
 
+    def __init__(self, manager) -> None:
+        super().__init__(manager)
+        up_color = QtGui.QColor("#c0392b")
+        down_color = QtGui.QColor("#16825d")
+        # vn.py 默认用黑色填充上涨 K 线；A 股工作台沿用盘口的红涨绿跌约定。
+        self._up_pen = QtGui.QPen(up_color)
+        self._black_brush = QtGui.QBrush(up_color)
+        self._down_pen = QtGui.QPen(down_color)
+        self._down_brush = QtGui.QBrush(down_color)
+
     def get_y_range(self, min_ix=None, max_ix=None):
         minimum, maximum = super().get_y_range(min_ix, max_ix)
         if maximum <= minimum:
@@ -272,6 +282,12 @@ class RealtimeChartWidget(ChartWidget):
             list(range(len(bars))),
             [bar.close_price for bar in bars],
         )
+
+    def update_history(self, history) -> None:
+        super().update_history(history)
+        # ChartWidget 仅在横轴变化时自动刷新纵轴。启动初期只有一根 Bar 时横轴
+        # 范围保持不变，必须主动重算，否则价格会被绘制在过期的坐标范围之外。
+        self._update_y_range()
 
 
 class ConfirmingOrderMonitor(OrderMonitor):

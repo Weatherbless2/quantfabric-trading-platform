@@ -55,18 +55,23 @@ def main() -> int:
     main_engine.connect(connection_setting, GATEWAY_NAME)
     window.subscribe_selected()
 
+    screenshot_saved = not args.screenshot
     if args.screenshot:
         def capture() -> None:
+            nonlocal screenshot_saved
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-            screen = qapp.primaryScreen()
-            if screen:
-                screen.grabWindow(window.winId()).save(str(args.screenshot))
+            # QWidget.grab works for an X11 desktop and Qt's headless test
+            # platform, while QScreen.grabWindow may silently return no image.
+            screenshot_saved = window.grab().save(str(args.screenshot))
+            if not screenshot_saved:
+                print(f"截图保存失败：{args.screenshot}", file=sys.stderr)
             window.close()
             qapp.quit()
 
         QtCore.QTimer.singleShot(max(args.screenshot_delay, 1000), capture)
 
-    return qapp.exec()
+    exit_code = qapp.exec()
+    return exit_code if screenshot_saved else 1
 
 
 if __name__ == "__main__":
