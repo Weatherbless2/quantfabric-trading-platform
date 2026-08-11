@@ -15,11 +15,12 @@ from fastapi import FastAPI, Header, HTTPException, status
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientError
 from passlib.context import CryptContext
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, desc, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .config import Settings
-from .database import AuditEvent, AuthSession, Base, Identity
+from .database import AccountGrant as AccountGrantRow
+from .database import AuditEvent, AuthSession, Base, Identity, Menu
 from .schemas import (
     AuthorizationRequest,
     AuthorizationResponse,
@@ -27,6 +28,14 @@ from .schemas import (
     InternalSessionResponse,
     OidcLoginRequest,
     PolicyRule,
+    AccountGrant,
+    AccountGrantResponse,
+    AuditQuery,
+    IdentityCreateRequest,
+    IdentityResponse,
+    IdentityUpdateRequest,
+    MenuRequest,
+    MenuResponse,
     RoleBinding,
     SessionResponse,
 )
@@ -173,6 +182,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not settings.internal_key or not value or not secrets.compare_digest(value, settings.internal_key):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid internal service key")
 
+    def require_admin(session_id: str, action: str, resource: str = "auth/policy") -> None:
+        decision = service.authorize(AuthorizationRequest(
+            session_id=session_id,
+            domain=settings.default_domain,
+            resource=resource,
+            action=action,
+        ))
+        if not decision.allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason)
+
     @app.get("/healthz")
     def health() -> dict:
         return {"status": "ok", "mode": settings.auth_mode}
@@ -199,6 +218,147 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            x_qf_internal_key: str | None = Header(default=None)) -> AuthorizationResponse:
         require_internal_key(x_qf_internal_key)
         return service.authorize(request)
+
+    @app.get("/v1/admin/identities", response_model=list[IdentityResponse])
+    def list_identities(session_id: str = Header(alias="X-QF-Session-ID")) -> list[IdentityResponse]:
+        require_admin(session_id, "identity:read")
+        with service.session_factory() as db:
+            identities = db.scalars(select(Identity).order_by(Identity.username)).all()
+            return [IdentityResponse(subject=item.subject, username=item.username,
+                                     display_name=item.display_name, active=item.active)
+                    for item in identities]
+
+    @app.post("/v1/admin/identities", response_model=IdentityResponse)
+    def create_identity(request: IdentityCreateRequest,
+                        session_id: str = Header(alias="X-QF-Session-ID")) -> IdentityResponse:
+        require_admin(session_id, "identity:write")
+        with service.session_factory.begin() as db:
+            if db.scalar(select(Identity).where(Identity.username == request.username)):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username already exists")
+            identity = Identity(subject=f"local:{request.username}", username=request.username,
+                                display_name=request.display_name or request.username,
+                                password_hash=PASSWORDS.hash(request.password))
+            db.add(identity)
+            db.flush()
+            return IdentityResponse(subject=identity.subject, username=identity.username,
+                                    display_name=identity.display_name, active=identity.active)
+
+    @app.patch("/v1/admin/identities/{username}", response_model=IdentityResponse)
+    def update_identity(username: str, request: IdentityUpdateRequest,
+                        session_id: str = Header(alias="X-QF-Session-ID")) -> IdentityResponse:
+        require_admin(session_id, "identity:write")
+        with service.session_factory.begin() as db:
+            identity = db.scalar(select(Identity).where(Identity.username == username))
+            if not identity:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="identity not found")
+            if request.display_name is not None:
+                identity.display_name = request.display_name
+            if request.password is not None:
+                identity.password_hash = PASSWORDS.hash(request.password)
+            if request.active is not None:
+                identity.active = request.active
+            return IdentityResponse(subject=identity.subject, username=identity.username,
+                                    display_name=identity.display_name, active=identity.active)
+
+    @app.get("/v1/admin/menus", response_model=list[MenuResponse])
+    def list_menus(session_id: str = Header(alias="X-QF-Session-ID")) -> list[MenuResponse]:
+        require_admin(session_id, "menu:read")
+        with service.session_factory() as db:
+            menus = db.scalars(select(Menu).order_by(Menu.sort_order, Menu.id)).all()
+            return [MenuResponse(id=item.id, name=item.name, parent_id=item.parent_id,
+                                 resource=item.resource, action=item.action,
+                                 sort_order=item.sort_order, enabled=item.enabled)
+                    for item in menus]
+
+    @app.put("/v1/admin/menus/{menu_id}", response_model=MenuResponse)
+    def upsert_menu(menu_id: str, request: MenuRequest,
+                    session_id: str = Header(alias="X-QF-Session-ID")) -> MenuResponse:
+        if menu_id != request.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="menu id mismatch")
+        require_admin(session_id, "menu:write")
+        with service.session_factory.begin() as db:
+            menu = db.get(Menu, menu_id)
+            if not menu:
+                menu = Menu(id=menu_id)
+                db.add(menu)
+            menu.name = request.name
+            menu.parent_id = request.parent_id
+            menu.resource = request.resource
+            menu.action = request.action
+            menu.sort_order = request.sort_order
+            menu.enabled = request.enabled
+            return MenuResponse.model_validate(menu, from_attributes=True)
+
+    @app.get("/v1/admin/account-grants", response_model=list[AccountGrantResponse])
+    def list_account_grants(session_id: str = Header(alias="X-QF-Session-ID")) -> list[AccountGrantResponse]:
+        require_admin(session_id, "account:grant")
+        with service.session_factory() as db:
+            grants = db.scalars(select(AccountGrantRow).order_by(AccountGrantRow.id)).all()
+            return [AccountGrantResponse(id=item.id, subject=item.subject, domain=item.domain,
+                                         account=item.account, action=item.action, active=item.active)
+                    for item in grants]
+
+    @app.post("/v1/admin/account-grants", response_model=AccountGrantResponse)
+    def add_account_grant(request: AccountGrant,
+                          session_id: str = Header(alias="X-QF-Session-ID")) -> AccountGrantResponse:
+        require_admin(session_id, "account:grant")
+        resource = f"account/{request.account}"
+        changed = service.enforcer.add_policy(request.subject, request.domain, resource, request.action)
+        if changed:
+            service.enforcer.save_policy()
+        with service.session_factory.begin() as db:
+            grant = db.scalar(select(AccountGrantRow).where(
+                AccountGrantRow.subject == request.subject,
+                AccountGrantRow.domain == request.domain,
+                AccountGrantRow.account == request.account,
+                AccountGrantRow.action == request.action,
+            ))
+            if not grant:
+                grant = AccountGrantRow(subject=request.subject, domain=request.domain,
+                                        account=request.account, action=request.action)
+                db.add(grant)
+                db.flush()
+            grant.active = True
+            return AccountGrantResponse(id=grant.id, subject=grant.subject, domain=grant.domain,
+                                        account=grant.account, action=grant.action, active=grant.active)
+
+    @app.delete("/v1/admin/account-grants")
+    def remove_account_grant(request: AccountGrant,
+                             session_id: str = Header(alias="X-QF-Session-ID")) -> dict:
+        require_admin(session_id, "account:grant")
+        resource = f"account/{request.account}"
+        changed = service.enforcer.remove_policy(request.subject, request.domain, resource, request.action)
+        if changed:
+            service.enforcer.save_policy()
+        with service.session_factory.begin() as db:
+            grant = db.scalar(select(AccountGrantRow).where(
+                AccountGrantRow.subject == request.subject,
+                AccountGrantRow.domain == request.domain,
+                AccountGrantRow.account == request.account,
+                AccountGrantRow.action == request.action,
+            ))
+            if grant:
+                grant.active = False
+                changed = True
+        return {"changed": changed}
+
+    @app.post("/v1/admin/audit/query")
+    def query_audit(request: AuditQuery,
+                    session_id: str = Header(alias="X-QF-Session-ID")) -> dict:
+        require_admin(session_id, "audit:read")
+        with service.session_factory() as db:
+            statement = select(AuditEvent).order_by(desc(AuditEvent.created_at)).offset(request.offset).limit(request.limit)
+            if request.actor:
+                statement = statement.where(AuditEvent.actor == request.actor)
+            if request.action:
+                statement = statement.where(AuditEvent.action == request.action)
+            if request.result:
+                statement = statement.where(AuditEvent.result == request.result)
+            events = db.scalars(statement).all()
+            return {"items": [{"id": item.id, "actor": item.actor, "action": item.action,
+                               "resource": item.resource, "domain": item.domain, "result": item.result,
+                               "trace_id": item.trace_id, "detail": item.detail,
+                               "created_at": item.created_at} for item in events]}
 
     @app.post("/v1/admin/policies")
     def add_policy(request: PolicyRule, session_id: str = Header(alias="X-QF-Session-ID")) -> dict:

@@ -103,6 +103,45 @@ class AuthServiceTest(unittest.TestCase):
         })
         self.assertEqual(roles, ("role:risk:update", "role:trader"))
 
+    def test_catalog_identity_menu_grant_and_audit_management(self) -> None:
+        session_id = self.login()
+        headers = {"X-QF-Session-ID": session_id}
+
+        response = self.client.post("/v1/admin/identities", headers=headers, json={
+            "username": "operator", "display_name": "交易员", "password": "operator-pass"
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["subject"], "local:operator")
+        response = self.client.patch("/v1/admin/identities/operator", headers=headers, json={"active": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["active"])
+
+        menu = {
+            "id": "trade.orders", "name": "委托管理", "resource": "account/*",
+            "action": "order:read", "sort_order": 10, "enabled": True,
+        }
+        response = self.client.put("/v1/admin/menus/trade.orders", headers=headers, json=menu)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["name"], "委托管理")
+        response = self.client.get("/v1/admin/menus", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["id"], "trade.orders")
+
+        grant = {
+            "subject": "local:operator", "domain": "desk:cn_equity",
+            "account": "610000071840", "action": "order:read",
+        }
+        response = self.client.post("/v1/admin/account-grants", headers=headers, json=grant)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["active"])
+        response = self.client.get("/v1/admin/account-grants", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["account"], "610000071840")
+
+        response = self.client.post("/v1/admin/audit/query", headers=headers, json={"limit": 200})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["items"])
+
 
 if __name__ == "__main__":
     unittest.main()
