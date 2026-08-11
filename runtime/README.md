@@ -3,10 +3,12 @@
 ## Current Scope
 
 This runtime starts the QuantFabric C++ trading core and the lightweight
-authorization service. The production desktop applications are C++ Qt clients:
+authorization service. The production desktop applications use a native C++
+protocol boundary:
 
-- `QtTrader` will connect directly to `XServer` with the existing HPSocket and
-  PackMessage protocol.
+- `VnpyMonitor` is the vn.py Qt trading workbench. Its in-process
+  `quantfabric_native` C++ extension connects directly to `XServer` with the
+  existing HPSocket and PackMessage protocol; it does not start a bridge process.
 - `QtAdmin` will call `AuthAdminService` over HTTP to manage users, menus, and
   account grants.
 - `AuthAdminService` provides login, short sessions, and Casbin checks only.
@@ -14,9 +16,8 @@ authorization service. The production desktop applications are C++ Qt clients:
 - `pytdx` and ATP remain external market/broker adapters. They are provider
   integrations, not an application-level Python/C++ client layer.
 
-The existing `XMonitor` C++ GUI is currently built as `QtTrader_0.1.0` while
-its pages are migrated. Its login now obtains a short session from
-`AuthAdminService` before opening the native PackMessage connection.
+`XMonitor` remains a legacy Fabric monitoring client. The current trading
+frontend is `VnpyMonitor`.
 
 ## First-time Setup
 
@@ -26,11 +27,13 @@ Run the following commands from the repository root:
 git submodule update --init --recursive
 
 sudo apt-get update
-sudo apt-get install -y build-essential cmake curl sqlite3 python3-venv \
+sudo apt-get install -y build-essential cmake curl sqlite3 python3-dev python3-venv \
     qtbase5-dev qt5-qmake
 
 python3 -m venv .auth-venv
 .auth-venv/bin/python -m pip install -r AuthAdminService/requirements.txt
+python3 -m venv .vnpy-venv
+.vnpy-venv/bin/python -m pip install -r VnpyMonitor/requirements.txt
 
 ./runtime/setup-bridges.sh
 ./runtime/prepare.sh
@@ -43,10 +46,10 @@ by Git.
 ## Build
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DPython3_EXECUTABLE="$PWD/.vnpy-venv/bin/python"
 cmake --build build --target \
-    XServer_0.9.0 XWatcher_0.4.0 XRiskJudge_0.9.3 XTrader_0.9.3 \
-    XMarketCenter_0.9.3 XQuant_0.1.0 QtAdmin_0.1.0 \
+    XServer_0.9.0 XWatcher_0.6.0 XRiskJudge_0.9.3 XTrader_0.9.3 \
+    XMarketCenter_0.9.3 XQuant_0.1.0 QtAdmin_0.1.0 quantfabric_native \
     -j"$(nproc)"
 ```
 
@@ -67,12 +70,11 @@ ready:
 ```bash
 ./build/QtAdmin_0.1.0
 
-APP_LOG_PATH="$PWD/runtime/log/" \
-    ./XMonitor/build/QtTrader_0.1.0 -f runtime/config/XMonitor.yml
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
 
-`APP_LOG_PATH` is required because the legacy QtTrader executable otherwise
-writes to a relative `./log/` directory that may not exist.
+Build the `quantfabric_native` extension with the same `.vnpy-venv` Python
+interpreter before starting `VnpyMonitor`.
 
 Stop all runtime processes with:
 
@@ -82,8 +84,9 @@ Stop all runtime processes with:
 
 ## Desktop Client Contract
 
-`QtTrader` obtains a short login session from `AuthAdminService`, then sends
-that session through the C++ client protocol to `XServer`. `XServer` validates
+`VnpyMonitor` obtains a short login session from `AuthAdminService`, then
+passes it to its in-process C++ native client for the `XServer` protocol.
+`XServer` validates
 the session and account permission with `AuthAdminService` before it forwards
 market subscriptions, order requests, or cancellation requests to the C++
 core.
