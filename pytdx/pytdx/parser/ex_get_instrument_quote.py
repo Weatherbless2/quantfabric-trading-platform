@@ -171,5 +171,3 @@ if __name__ == '__main__':
             f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
             f"Elapsed Time(ms): {(end_time - init_time).total_seconds() * 1000:.3f}"
             )
-
-

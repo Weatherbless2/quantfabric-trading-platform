@@ -14,7 +14,3 @@ class TdxFunctionCallError(Exception):
     def __init__(self, *args, **kwargs):
         super(TdxFunctionCallError, self).__init__(*args, **kwargs)
         self.original_exception = None
-
-
-
-

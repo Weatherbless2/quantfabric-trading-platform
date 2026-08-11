@@ -59,4 +59,3 @@ class GetCompanyInfoCategory(BaseParser):
             category.append(entry)
 
         return category
-

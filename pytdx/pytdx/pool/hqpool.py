@@ -173,6 +173,3 @@ if __name__ == '__main__':
         ret = api.get_xdxr_info(0, '000001')
         print("send api call done")
         pprint.pprint(ret)
-
-
-

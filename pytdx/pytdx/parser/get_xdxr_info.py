@@ -166,4 +166,3 @@ if __name__ == '__main__':
         #print(api.to_df(api.get_xdxr_info(1, '600008')))
         # 14 送认沽权证
         #print(api.to_df(api.get_xdxr_info(0, '000932')))
-

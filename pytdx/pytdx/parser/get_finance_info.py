@@ -133,4 +133,3 @@ if __name__ == '__main__':
     api = TdxHq_API()
     with api.connect():
         pp.pprint(api.get_finance_info(1, "600030"))
-

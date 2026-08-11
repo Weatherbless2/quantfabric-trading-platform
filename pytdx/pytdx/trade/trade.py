@@ -302,8 +302,3 @@ if __name__ == "__main__":
 
         print("---登出---")
         print(api.logoff(client_id))
-
-
-
-
-

@@ -127,4 +127,3 @@ class TDXParams:
     VIPDOC = "C:\\new_tdx\\vipdoc" if vipdoc_env == "" or vipdoc_env is None else vipdoc_env # 默认安装路径-不含专业财务数据
     # VIPDOC = "\\GTJA\\RichEZ\\newVer\\vipdoc" # 券商版本参考路径-可以下载专业财务数据
     # VIPDOC = "D:\\new_tdx\\vipdoc\\hsjday" # 自定义下载文件参考路径
-

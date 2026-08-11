@@ -28,5 +28,3 @@ class HqHeartBeatThread(Thread):
                     self.api.do_heartbeat()
                 except Exception as e:
                     log.debug(str(e))
-
-

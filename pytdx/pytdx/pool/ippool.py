@@ -159,6 +159,3 @@ if __name__ == "__main__":
     log.debug(str(pool.get_ips()))
     log.debug("ready to teardown")
     pool.teardown()
-
-
-

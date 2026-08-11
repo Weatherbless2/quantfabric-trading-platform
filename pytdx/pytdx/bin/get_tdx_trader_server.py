@@ -254,4 +254,3 @@ if __name__ == '__main__':
         # gen_config_file()
     except SystemExit:
         exit()
-

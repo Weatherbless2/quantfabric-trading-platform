@@ -78,5 +78,3 @@ if __name__ == '__main__':
         # ret = api.get_and_parse_block_info("block.dat")
         ret = api.get_and_parse_block_info("block.dat")
         print(api.to_df(ret))
-
-

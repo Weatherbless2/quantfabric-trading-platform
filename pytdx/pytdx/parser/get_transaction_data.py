@@ -48,5 +48,3 @@ class GetTransactionData(BaseParser):
             ticks.append(tick)
 
         return ticks
-
-

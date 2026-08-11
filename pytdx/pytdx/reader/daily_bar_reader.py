@@ -134,4 +134,3 @@ if __name__ == '__main__':
         print(tdx_reader.get_df('000001', 'sz'))
     except TdxFileNotFoundException as e:
         pass
-

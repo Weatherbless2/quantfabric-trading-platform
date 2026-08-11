@@ -112,8 +112,3 @@ if __name__ == '__main__':
         x = apiX.to_df(apiX.get_history_instrument_bars_range(47, "IF2512", 20170613, 20251015))
         print(x.__len__)
         pprint.pprint(x.tail(100))
-
-
-
-
-
