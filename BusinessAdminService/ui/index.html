@@ -27,7 +27,7 @@
     }
     .app {
       display: grid;
-      grid-template-columns: 240px 1fr 360px;
+      grid-template-columns: 240px 1fr;
       min-height: 100vh;
     }
     .sidebar, .detail, .topbar, .card { background: var(--panel); }
@@ -74,10 +74,7 @@
     th, td { border-bottom: 1px solid #243443; padding: 9px 10px; text-align: left; white-space: nowrap; }
     th { position: sticky; top: 0; background: var(--panel-2); color: #a9bbc9; }
     tr:hover { background: #1d2a37; }
-    .detail {
-      border-left: 1px solid var(--line);
-      padding: 14px; display: flex; flex-direction: column; gap: 12px;
-    }
+    .detail { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
     .detail h3 { margin: 0; font-size: 15px; }
     .detail p { margin: 0; color: var(--muted); font-size: 12px; }
     .form-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -96,10 +93,24 @@
       width: min(420px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px;
       display: grid; gap: 10px;
     }
+    .editor-overlay {
+      position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+      background: rgba(4, 9, 14, 0.72); padding: 20px;
+    }
+    .editor-modal {
+      width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto;
+      background: var(--panel); border: 1px solid #3a5368; border-radius: 6px; box-shadow: 0 18px 60px rgba(0,0,0,.45);
+      padding: 18px;
+    }
+    .editor-head { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 14px; }
+    .editor-head h3 { margin: 0; font-size: 16px; }
+    .editor-head .spacer { flex: 1; }
+    .editor-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    @media (max-width: 760px) { .editor-fields { grid-template-columns: 1fr; } }
     .empty { color: var(--muted); padding: 18px; }
     @media (max-width: 1320px) {
       .app { grid-template-columns: 220px 1fr; }
-      .detail { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); }
       .main { min-width: 0; }
     }
   </style>
@@ -151,22 +162,24 @@
       <div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
     </section>
   </main>
-  <aside class="detail">
-    <div>
-      <h3 id="detailTitle">详情</h3>
-      <p id="detailHint">选择模块后可查看、编辑和发布。</p>
-    </div>
-    <div class="form-grid" id="detailForm"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="primary" id="saveButton">保存</button>
-      <button class="bad" id="deleteButton">删除</button>
-    </div>
-    <div>
-      <div style="margin-bottom:8px;font-size:13px;font-weight:700;">操作日志</div>
-      <div class="log" id="log"></div>
-    </div>
-  </aside>
 </div>
+<div class="editor-overlay" id="editorOverlay">
+  <section class="editor-modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="editor-head">
+      <h3 id="detailTitle">编辑</h3>
+      <span class="spacer"></span>
+      <button id="closeEditor" title="关闭编辑窗口">关闭</button>
+    </div>
+    <p id="detailHint" style="color:var(--muted);font-size:12px;margin:0 0 14px;"></p>
+    <div class="editor-fields" id="detailForm"></div>
+    <div class="editor-actions">
+      <button id="cancelEditor">取消</button>
+      <button class="primary" id="saveButton">保存</button>
+    </div>
+  </section>
+</div>
+<div id="toast" style="position:fixed;right:22px;bottom:22px;z-index:30;display:none;background:#203041;border:1px solid #3a5368;padding:10px 14px;border-radius:4px;font-size:13px;"></div>
+<div id="log" aria-hidden="true" style="display:none"></div>
 <script>
 const state = {
   serviceUrl: "",
@@ -253,9 +266,18 @@ const navTargets = {
 
 function log(message) {
   const logBox = document.getElementById("log");
+  if (!logBox) return notify(message);
   const line = document.createElement("div");
   line.textContent = `${new Date().toLocaleTimeString()}  ${message}`;
   logBox.prepend(line);
+}
+
+function notify(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.style.display = "block";
+  clearTimeout(notify.timer);
+  notify.timer = setTimeout(() => { toast.style.display = "none"; }, 2400);
 }
 
 function headers() {
@@ -314,6 +336,10 @@ function renderTable(columns, rows) {
   rows.forEach(row => {
     const tr = document.createElement("tr");
     tr.onclick = () => selectRow(row.key || row.version || "", row);
+    tr.ondblclick = () => {
+      selectRow(row.key || row.version || "", row);
+      if (MODULES[state.currentModule].fields) openEditor();
+    };
     tr.innerHTML = columns.map(column => {
       const value = row[column] ?? "";
       if (column === "status") {
@@ -368,8 +394,6 @@ function renderDetail(module, row) {
     "当前是已发布或已校验版本，只读。请在版本中心复制为草稿后编辑。";
   const root = document.getElementById("detailForm");
   root.innerHTML = "";
-  document.getElementById("saveButton").style.display = !meta.readonly && canEditCurrentVersion() ? "inline-block" : "none";
-  document.getElementById("deleteButton").style.display = !meta.readonly && canEditCurrentVersion() ? "inline-block" : "none";
   if (!meta.fields) {
     root.innerHTML = `<div class="empty">选择一行后显示详情</div>`;
     return;
@@ -382,6 +406,21 @@ function renderDetail(module, row) {
     wrapper.innerHTML = `<label>${escapeHtml(labelFor(field))}${required}</label>${fieldControl(field, values[field])}`;
     root.appendChild(wrapper);
   });
+}
+
+function openEditor() {
+  const meta = MODULES[state.currentModule];
+  if (!meta.fields) return;
+  if (!canEditCurrentVersion()) {
+    notify("当前不是草稿版本，请先复制为草稿");
+    return;
+  }
+  renderDetail(state.currentModule, state.selectedRow);
+  document.getElementById("editorOverlay").style.display = "flex";
+}
+
+function closeEditor() {
+  document.getElementById("editorOverlay").style.display = "none";
 }
 
 function currentPayload() {
@@ -522,7 +561,7 @@ function renderModuleToolbar(meta) {
     <button id="previousPage">上一页</button>
     <span id="pageStatus" style="color:var(--muted);font-size:12px;"></span>
     <button id="nextPage">下一页</button>
-    ${meta.readonly || !canEditCurrentVersion() ? "" : '<button id="newRowButton">新增记录</button>'}
+    ${meta.readonly ? "" : '<button id="newRowButton">新增</button><button id="editRowButton">修改</button><button class="bad" id="deleteRowButton">删除</button>'}
   `;
   document.getElementById("refreshButton").onclick = async () => {
     state.version = Number(document.getElementById("versionInput").value || 0) || state.version;
@@ -532,6 +571,11 @@ function renderModuleToolbar(meta) {
     await loadConfigPage(meta);
     log(`已刷新 ${meta.title}`);
   };
+  document.getElementById("editRowButton").onclick = () => {
+    if (!state.selectedRow) return notify("请先选择一条记录");
+    openEditor();
+  };
+  document.getElementById("deleteRowButton").onclick = () => deleteCurrent().catch(error => notify(error.message));
   document.getElementById("previousPage").onclick = async () => {
     state.offset = Math.max(0, state.offset - state.pageSize);
     await loadConfigPage(meta);
@@ -543,9 +587,10 @@ function renderModuleToolbar(meta) {
   };
   if (!meta.readonly) {
     document.getElementById("newRowButton").onclick = () => {
+      if (!canEditCurrentVersion()) return notify("当前不是草稿版本，请先复制为草稿");
       state.selectedRow = null;
       state.selectedKey = "";
-      renderDetail(state.currentModule, null);
+      openEditor();
     };
   }
 }
@@ -592,6 +637,7 @@ async function saveCurrent() {
     .map(field => String(payload[field])).filter(Boolean).join(":");
   await api(`${meta.path}/${key}?version=${state.version}`, {method: "PUT", body: JSON.stringify(payload)});
   log(`已保存 ${meta.title} ${key}`);
+  closeEditor();
   await selectModule(state.currentModule);
 }
 
@@ -602,11 +648,16 @@ async function deleteCurrent() {
   log(`已删除 ${meta.title} ${state.selectedKey}`);
   state.selectedKey = "";
   state.selectedRow = null;
+  closeEditor();
   await selectModule(state.currentModule);
 }
 
 document.getElementById("saveButton").onclick = () => saveCurrent().catch(error => alert(error.message));
-document.getElementById("deleteButton").onclick = () => deleteCurrent().catch(error => alert(error.message));
+document.getElementById("closeEditor").onclick = closeEditor;
+document.getElementById("cancelEditor").onclick = closeEditor;
+document.getElementById("editorOverlay").onclick = event => {
+  if (event.target.id === "editorOverlay") closeEditor();
+};
 
 document.getElementById("loginForm").addEventListener("submit", async event => {
   event.preventDefault();
