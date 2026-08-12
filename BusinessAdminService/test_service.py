@@ -197,6 +197,37 @@ class BusinessControlPlaneTest(unittest.TestCase):
     def test_internal_published_config_requires_service_key(self) -> None:
         self.assertEqual(self.client.get("/v1/internal/config/published").status_code, 401)
 
+    def test_casbin_denies_business_read_for_ungranted_operator(self) -> None:
+        admin_session = self.auth_client.post("/v1/sessions/development", json={
+            "username": "admin", "password": "test-password",
+        }).json()["session_id"]
+        created = self.auth_client.post("/v1/admin/identities", headers={
+            "X-QF-Session-ID": admin_session,
+        }, json={
+            "username": "viewer", "display_name": "Read denied operator", "password": "viewer-password",
+        })
+        self.assertEqual(created.status_code, 200)
+        with patch("BusinessAdminService.service.urlopen", side_effect=self.auth_urlopen):
+            viewer_session = self.client.post("/v1/sessions/development", json={
+                "username": "viewer", "password": "viewer-password",
+            }).json()["session_id"]
+            response = self.client.get("/v1/config/versions", headers={
+                "X-QF-Session-ID": viewer_session,
+            })
+        self.assertEqual(response.status_code, 403)
+
+    def test_business_audit_tracks_version_write(self) -> None:
+        session = self.login()
+        headers = {"X-QF-Session-ID": session["session_id"]}
+        with patch("BusinessAdminService.service.urlopen", side_effect=self.auth_urlopen):
+            version = self.client.post("/v1/config/versions", headers=headers,
+                                       json={"description": "audit draft"}).json()["version"]
+            audit = self.client.get(f"/v1/audit?version={version}", headers=headers)
+        self.assertEqual(audit.status_code, 200)
+        self.assertTrue(any(item["action"] == "business:write" and
+                            item["resource"] == "config-version"
+                            for item in audit.json()["items"]))
+
 
 if __name__ == "__main__":
     unittest.main()
