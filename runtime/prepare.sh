@@ -43,14 +43,38 @@ if [[ ! -f "${business_env}" ]]; then
 QF_BUSINESS_DATABASE_URL=sqlite:///${repo_root}/runtime/data/business_admin.db
 QF_BUSINESS_AUTH_URL=http://127.0.0.1:18080
 QF_BUSINESS_DOMAIN=desk:cn_equity
+QF_BUSINESS_POLICY_ENABLED=false
+QF_BUSINESS_POLICY_URL=http://127.0.0.1:19080
+QF_BUSINESS_POLICY_TIMEOUT_MS=1000
+QF_BUSINESS_POLICY_REFRESH_SECONDS=60
 EOF
 fi
 chmod 600 "${business_env}"
 
+# Older local files predate the runtime-policy settings. Add only the missing
+# defaults so upgrading the repository does not discard a team's database URL.
+ensure_business_setting() {
+    local key=$1
+    local value=$2
+    if ! grep -q "^${key}=" "${business_env}"; then
+        printf '%s=%s\n' "${key}" "${value}" >>"${business_env}"
+    fi
+}
+ensure_business_setting QF_BUSINESS_POLICY_ENABLED false
+ensure_business_setting QF_BUSINESS_POLICY_URL http://127.0.0.1:19080
+ensure_business_setting QF_BUSINESS_POLICY_TIMEOUT_MS 1000
+ensure_business_setting QF_BUSINESS_POLICY_REFRESH_SECONDS 60
+
+# The local business environment is the single source of truth for whether
+# XServer must load published configuration before accepting business traffic.
+set -a
+source "${business_env}"
+set +a
+
 # runtime/config is local state. Keep the checked-in XServer sample as the
 # source of truth, then make its paths and control-plane switch explicit for
-# the local process. The policy is off by default so an empty development
-# database cannot change the existing simulated trading chain.
+# the local process. The business environment owns this switch so start.sh
+# starts the control plane before XServer whenever admission is enabled.
 cat >"${config_dir}/XServer.yml" <<EOF
 XServerConfig:
   ServerIP: 127.0.0.1
