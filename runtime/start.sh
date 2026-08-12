@@ -41,6 +41,10 @@ if [[ ! -f "${config_dir}/AuthAdmin.env" ]]; then
     printf 'authorization configuration is missing; run runtime/prepare.sh first\n' >&2
     exit 1
 fi
+if [[ ! -f "${config_dir}/BusinessAdmin.env" ]]; then
+    printf 'business control-plane configuration is missing; run runtime/prepare.sh first\n' >&2
+    exit 1
+fi
 if [[ ! -x "${repo_root}/.auth-venv/bin/python" ]]; then
     printf 'authorization Python environment is missing; install AuthAdminService/requirements.txt first\n' >&2
     exit 1
@@ -50,6 +54,7 @@ fi
 # starting XServer so its internal AuthAdmin request key is never in YAML.
 set -a
 source "${config_dir}/AuthAdmin.env"
+source "${config_dir}/BusinessAdmin.env"
 set +a
 
 start_component() {
@@ -120,6 +125,11 @@ start_component AuthAdmin \
     env "PYTHONPATH=${repo_root}" "${repo_root}/.auth-venv/bin/python" -m uvicorn \
     AuthAdminService.app:app --host 127.0.0.1 --port 18080
 wait_for_http AuthAdmin "http://127.0.0.1:18080/healthz"
+if [[ "${QF_BUSINESS_POLICY_ENABLED:-false}" == "true" ]]; then
+    "${runtime_dir}/start-business-admin.sh"
+    wait_for_http BusinessAdmin "http://127.0.0.1:19080/healthz"
+    components=(BusinessAdmin "${components[@]}")
+fi
 if [[ "${mode}" != "test" ]]; then
     atp_bridge_args=()
     if [[ "${mode}" == "real-trade" ]]; then

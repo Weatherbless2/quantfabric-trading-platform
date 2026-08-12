@@ -99,6 +99,25 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 - 不使用 Redis、Keycloak、审批流、多租户和复杂的权限树。
 - 不让桌面客户端直连 PostgreSQL，也不让客户端直接调用 ATP。
 
+## 业务控制面与运行时配置
+
+业务控制面位于根目录 `BusinessAdminService/`，与交易面分离：
+
+```text
+运营人员 -> BusinessAdminService -> PostgreSQL/SQLite 配置库
+                              -> 草稿 / 校验 / 发布 / 审计
+已发布版本 -> XServer 内部 HTTP -> 原子替换运行策略
+```
+
+控制面只导出 `QF_RUNTIME_POLICY` 文本契约中的市场、产品、资产单元、资金账户、账户关联和
+证券交易规则。XServer 启动时读取一次，之后按 `BusinessPolicy.RefreshSeconds` 刷新；每次
+刷新先完整解析和交叉校验，再一次性替换共享指针。请求失败保留旧版本，首次加载失败则对
+订阅、下单和撤单拒绝。撤单消息本身只有 `OrderRef`，所以 XServer 从订单状态回报维护
+`account + OrderRef -> product/ticker/exchange` 索引，才能正确执行证券级 `cancel_allowed`。
+
+开关默认关闭，避免后台空库改变既有模拟链路。启用前必须发布与 XTrader 产品代码、账户和
+行情标的完全匹配的版本；完整运行命令见 `runtime/README.md`。
+
 ## 实现顺序
 
 1. 固定权限数据模型：用户、角色、菜单、用户账户授权、Casbin 规则和审计日志。
@@ -107,6 +126,8 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 4. 完成 VnpyMonitor 与 `quantfabric_native`：短会话、原生连接、行情/资金/持仓/订单事件映射已接入；工作台可用 `--user`、`--password`、`--account` 使用 QtAdmin 创建的操作员身份登录。
 5. 完善 VnpyMonitor 的全量行情、K 线、委托表、成交表、资金与持仓；界面基于 vn.py 标准监控组件。
 6. 最后接入下单、撤单和交易回报状态机，再用 ATP 测试柜台完成模拟验证。
+7. 已完成控制面第一版：主数据页面、版本发布/回滚草稿、审计、C++ 已发布策略读取与热更新；
+   仍需在真实柜台测试环境验证供应商字段映射、断线重连和完整成交状态机。
 
 ## 现状与目标
 

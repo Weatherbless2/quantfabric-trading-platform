@@ -44,6 +44,12 @@ python3 -m venv .vnpy-venv
 contains the local development authorization secret and is deliberately ignored
 by Git.
 
+It also creates the local BusinessAdmin SQLite configuration and rewrites
+`runtime/config/XServer.yml`. Business policy admission is disabled by default;
+set `QF_BUSINESS_POLICY_ENABLED=true` before `prepare.sh` and `start.sh` only
+after a valid published version exists. Use `./runtime/start-business-admin.sh`
+to run the Python control plane separately.
+
 ## Build
 
 ```bash
@@ -69,6 +75,14 @@ memory publishing channels are initialized. In `test` mode it publishes local
 A-share simulation data and `TestTrader` returns simulated fills; neither
 pytdx nor ATP is contacted.
 
+When business policy admission is enabled, XServer loads
+`GET /v1/internal/config/published/runtime-policy` with the shared internal key.
+The refresh thread swaps only a fully parsed version. Failed refreshes retain the
+last accepted version; no published version at startup means fail-closed for
+subscriptions, orders and cancellations. The order reference cache built from
+`OrderStatus` reports supplies the security context needed to enforce
+`cancel_allowed` without changing the existing PackMessage layout.
+
 Start the desktop programs from separate terminals after the test chain is
 ready:
 
@@ -92,6 +106,15 @@ Stop all runtime processes with:
 
 ```bash
 ./runtime/stop.sh
+```
+
+Useful verification commands:
+
+```bash
+.auth-venv/bin/python -m unittest BusinessAdminService.test_service
+cmake --build build --target XServerRuntimePolicyTest -j"$(nproc)"
+./build/XServerRuntimePolicyTest
+git diff --check
 ```
 
 ## Desktop Client Contract

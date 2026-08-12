@@ -34,4 +34,44 @@ EOF
 fi
 chmod 600 "${auth_env}"
 
+business_env="${config_dir}/BusinessAdmin.env"
+if [[ ! -f "${business_env}" ]]; then
+    # This remains independent of the trading runtime. Teams may replace this
+    # local SQLite URL with the dedicated PostgreSQL control-plane database.
+    umask 077
+    cat >"${business_env}" <<EOF
+QF_BUSINESS_DATABASE_URL=sqlite:///${repo_root}/runtime/data/business_admin.db
+QF_BUSINESS_AUTH_URL=http://127.0.0.1:18080
+QF_BUSINESS_DOMAIN=desk:cn_equity
+EOF
+fi
+chmod 600 "${business_env}"
+
+# runtime/config is local state. Keep the checked-in XServer sample as the
+# source of truth, then make its paths and control-plane switch explicit for
+# the local process. The policy is off by default so an empty development
+# database cannot change the existing simulated trading chain.
+cat >"${config_dir}/XServer.yml" <<EOF
+XServerConfig:
+  ServerIP: 127.0.0.1
+  Port: 8000
+  OpenTime: 00:00:00.000
+  CloseTime: 23:59:59.999
+  SnapShot: false
+  BinPath: ${repo_root}/runtime/data
+  UserDBPath: ${config_dir}/XServer.db
+  AppCheckTime: 23:58:00.000
+  AppStatusStoreTime: 23:59:00.000
+  Authorization:
+    Enabled: true
+    ServiceURL: http://127.0.0.1:18080
+    TimeoutMs: 1000
+    Domain: desk:cn_equity
+  BusinessPolicy:
+    Enabled: ${QF_BUSINESS_POLICY_ENABLED:-false}
+    ServiceURL: ${QF_BUSINESS_POLICY_URL:-http://127.0.0.1:19080}
+    TimeoutMs: ${QF_BUSINESS_POLICY_TIMEOUT_MS:-1000}
+    RefreshSeconds: ${QF_BUSINESS_POLICY_REFRESH_SECONDS:-60}
+EOF
+
 printf 'runtime configuration prepared in %s\n' "${config_dir}"

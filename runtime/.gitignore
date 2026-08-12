@@ -1,5 +1,7 @@
 config/*.db
 config/AuthAdmin.env
+config/BusinessAdmin.env
+config/XServer.policy-smoke.yml
 data/
 log/
 pids/

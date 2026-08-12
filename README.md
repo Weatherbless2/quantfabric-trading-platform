@@ -117,6 +117,35 @@ pytdx、ATP 或真实柜台。权限后台的实际操作方式见
 `runtime/prepare.sh` 生成的数据库、日志、PID 和 `AuthAdmin.env` 都是本机运行状态，
 不能提交到 Git。
 
+## 业务控制面与已发布运行策略
+
+`BusinessAdminService/` 是独立的 Python 控制面，负责主数据、账户关联、版本校验、发布和
+审计；它不写入实时订单、成交、资金或持仓。PostgreSQL 迁移位于
+`BusinessAdminService/migrations/postgresql/`，先执行 001、002、003，再设置
+`QF_BUSINESS_DATABASE_URL` 启动服务。开发环境默认使用运行目录中的 SQLite。
+
+只有 `PUBLISHED` 版本会被 C++ `XServer` 读取。要在本地测试启用这条边界：
+
+```bash
+export QF_BUSINESS_POLICY_ENABLED=true
+./runtime/prepare.sh
+./runtime/start-business-admin.sh
+./runtime/start.sh test
+```
+
+启用前必须在后台发布与 `TestTrader` 匹配的 `Test` 产品、账户关联和证券规则。验证策略
+加载与回退：查看 `runtime/log/XServer.stdout.log` 中的版本激活/刷新告警，并运行：
+
+```bash
+.auth-venv/bin/python -m unittest BusinessAdminService.test_service
+cmake --build build --target XServerRuntimePolicyTest -j"$(nproc)"
+./build/XServerRuntimePolicyTest
+```
+
+控制面暂时不可用时，XServer 保留上一次完整加载的策略；首次加载失败则对订阅、下单和撤单
+采取 fail-closed。撤单通过 XServer 从订单回报建立的 `OrderRef` 索引取得证券上下文，继续
+执行已发布版本的 `cancel_allowed`，不改变现有 `PackMessage` 协议。
+
 更完整的运行说明见 [runtime/README.md](runtime/README.md)。
 
 ## 团队协作

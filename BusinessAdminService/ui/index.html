@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuantFabric 业务后台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1720;
+      --panel: #161f29;
+      --panel-2: #1c2732;
+      --line: #2a3a49;
+      --text: #dbe7f2;
+      --muted: #89a0b2;
+      --accent: #2f7dd1;
+      --good: #1f8f6a;
+      --warn: #d1892f;
+      --bad: #cf5b58;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 240px 1fr 360px;
+      min-height: 100vh;
+    }
+    .sidebar, .detail, .topbar, .card { background: var(--panel); }
+    .sidebar {
+      border-right: 1px solid var(--line);
+      padding: 14px 12px;
+    }
+    .brand { font-size: 20px; font-weight: 700; margin-bottom: 18px; }
+    .brand small { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .nav-group { margin-bottom: 18px; }
+    .nav-title { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+    .nav button {
+      width: 100%; border: 1px solid transparent; background: transparent; color: var(--text);
+      text-align: left; padding: 9px 10px; border-radius: 4px; cursor: pointer;
+    }
+    .nav button.active, .nav button:hover { background: #203041; border-color: #35506a; }
+    .main { display: flex; flex-direction: column; min-width: 0; }
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    }
+    .crumbs { font-size: 13px; color: var(--muted); }
+    .topbar .spacer { flex: 1; }
+    .session { color: var(--muted); font-size: 12px; }
+    .content { padding: 14px 16px 16px; display: grid; grid-template-rows: auto auto 1fr; gap: 12px; min-height: 0; }
+    .toolbar, .summary, .table-wrap, .detail { border: 1px solid var(--line); border-radius: 4px; }
+    .toolbar, .summary { background: var(--panel); padding: 12px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    input, select, textarea, button {
+      background: #101821; color: var(--text); border: 1px solid #334758; border-radius: 4px; padding: 8px 10px;
+      font: inherit;
+    }
+    button { cursor: pointer; }
+    button.primary { background: var(--accent); border-color: #4c8ed2; }
+    button.good { background: var(--good); border-color: #2fa37b; }
+    button.warn { background: #5d4926; border-color: #9f7436; }
+    button.bad { background: #5a2f30; border-color: #9f4a4a; }
+    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .metric { background: var(--panel-2); border: 1px solid #263849; border-radius: 4px; padding: 10px; }
+    .metric label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    .metric strong { font-size: 22px; }
+    .table-wrap { overflow: auto; background: var(--panel); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #243443; padding: 9px 10px; text-align: left; white-space: nowrap; }
+    th { position: sticky; top: 0; background: var(--panel-2); color: #a9bbc9; }
+    tr:hover { background: #1d2a37; }
+    .detail {
+      border-left: 1px solid var(--line);
+      padding: 14px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .detail h3 { margin: 0; font-size: 15px; }
+    .detail p { margin: 0; color: var(--muted); font-size: 12px; }
+    .form-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .field label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .field input, .field select, .field textarea { width: 100%; }
+    .field textarea { min-height: 72px; resize: vertical; }
+    .log { background: #101821; border: 1px solid #2a3a49; border-radius: 4px; min-height: 150px; padding: 10px; overflow: auto; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+    .pill.ok { background: #17392f; color: #8ae0ba; }
+    .pill.warn { background: #46381f; color: #f0c074; }
+    .pill.bad { background: #4a2729; color: #f4a09c; }
+    .login-overlay {
+      position: fixed; inset: 0; background: rgba(7, 12, 18, 0.92); display: flex; align-items: center; justify-content: center;
+    }
+    .login-card {
+      width: min(420px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px;
+      display: grid; gap: 10px;
+    }
+    .empty { color: var(--muted); padding: 18px; }
+    @media (max-width: 1320px) {
+      .app { grid-template-columns: 220px 1fr; }
+      .detail { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); }
+      .main { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="login-overlay" id="loginOverlay">
+  <form class="login-card" id="loginForm">
+    <div style="font-size:18px;font-weight:700;">QuantFabric 业务后台</div>
+    <div style="color:var(--muted);font-size:12px;">产品、账户、证券主数据、发布版本与审计</div>
+    <label class="field"><span>服务地址</span><input id="serviceUrl" value="http://127.0.0.1:19080"></label>
+    <label class="field"><span>用户名</span><input id="username" value="admin"></label>
+    <label class="field"><span>密码</span><input id="password" type="password" value="123456"></label>
+    <button class="primary" type="submit">登录</button>
+    <div id="loginError" style="color:#f4a09c;font-size:12px;"></div>
+  </form>
+</div>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">QuantFabric<small>业务控制面</small></div>
+    <div class="nav-group">
+      <p class="nav-title">版本与发布</p>
+      <div class="nav" id="navVersion"></div>
+    </div>
+    <div class="nav-group">
+      <p class="nav-title">基础主数据</p>
+      <div class="nav" id="navBase"></div>
+    </div>
+    <div class="nav-group">
+      <p class="nav-title">业务配置</p>
+      <div class="nav" id="navBusiness"></div>
+    </div>
+    <div class="nav-group">
+      <p class="nav-title">只读视图</p>
+      <div class="nav" id="navReadonly"></div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div id="pageTitle" style="font-size:16px;font-weight:700;">版本中心</div>
+        <div class="crumbs" id="crumbs">业务后台 / 版本中心</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="session" id="sessionText">未登录</div>
+    </div>
+    <section class="content">
+      <div class="toolbar" id="toolbar"></div>
+      <div class="summary" id="summary"></div>
+      <div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+    </section>
+  </main>
+  <aside class="detail">
+    <div>
+      <h3 id="detailTitle">详情</h3>
+      <p id="detailHint">选择模块后可查看、编辑和发布。</p>
+    </div>
+    <div class="form-grid" id="detailForm"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="primary" id="saveButton">保存</button>
+      <button class="bad" id="deleteButton">删除</button>
+    </div>
+    <div>
+      <div style="margin-bottom:8px;font-size:13px;font-weight:700;">操作日志</div>
+      <div class="log" id="log"></div>
+    </div>
+  </aside>
+</div>
+<script>
+const state = {
+  serviceUrl: "",
+  sessionId: "",
+  actor: "",
+  version: null,
+  publishedVersion: null,
+  currentModule: "versions",
+  currentRows: [],
+  selectedKey: "",
+  selectedRow: null,
+  query: "",
+  offset: 0,
+  pageSize: 50,
+  total: 0,
+};
+
+const MODULES = {
+  versions: {title: "版本中心", path: "versions", readonly: false, columns: ["version", "status", "description", "created_by", "published_at"], group: "version"},
+  markets: {title: "市场主数据", path: "config/markets", columns: ["market_code", "exchange_code", "name", "full_name", "enabled"], fields: ["market_code", "exchange_code", "name", "full_name", "enabled", "remark"], keyFields: ["market_code"], group: "base"},
+  colocations: {title: "机房清单", path: "config/colocations", columns: ["colo_id", "name", "full_name", "enabled"], fields: ["colo_id", "name", "full_name", "enabled"], keyFields: ["colo_id"], group: "base"},
+  products: {title: "产品清单", path: "config/products", columns: ["fund_id", "fund_code", "name", "status", "allowed_markets"], fields: ["fund_id", "fund_code", "name", "full_name", "fund_type", "valuation_type", "bond_risk_value", "long_stop_value", "status", "allowed_security_types", "allowed_directions", "allowed_markets"], keyFields: ["fund_id"], group: "business"},
+  projects: {title: "资产单元", path: "config/projects", columns: ["project_id", "name", "fund_id", "initial_balance", "project_type", "enabled"], fields: ["project_id", "name", "fund_id", "initial_balance", "project_type", "hedge_flags", "default_flag", "enabled", "remark"], keyFields: ["project_id"], group: "business"},
+  accounts: {title: "资金账户", path: "config/accounts", columns: ["account_id", "broker_id", "broker_name", "account_type", "colo_id", "status"], fields: ["account_id", "broker_id", "broker_name", "account_type", "initial_balance", "colo_id", "open_date", "status"], keyFields: ["account_id"], group: "business"},
+  "account-links": {title: "账户关联", path: "config/account-links", columns: ["project_id", "account_id", "account_type", "fund_id", "default_flag"], fields: ["project_id", "account_id", "account_type", "fund_id", "default_flag", "external_account_id"], keyFields: ["project_id", "account_id", "account_type"], group: "business"},
+  securities: {title: "证券主数据", path: "config/securities", columns: ["market_code", "symbol", "name", "security_type", "price_tick", "suspended"], fields: ["market_code", "symbol", "name", "security_type", "exchange_symbol", "suspended", "buy_allowed", "sell_allowed", "cancel_allowed", "price_tick", "buy_unit", "sell_unit", "max_quantity", "min_quantity"], keyFields: ["market_code", "symbol"], group: "business"},
+  "futures-products": {title: "期货品种", path: "config/futures-products", columns: ["market_code", "product_code", "name", "trading_unit", "margin_ratio"], fields: ["market_code", "product_code", "name", "trading_unit", "price_tick", "price_limit", "margin_ratio", "contract_month_rule", "last_trade_day_rule", "delivery_rule"], keyFields: ["market_code", "product_code"], group: "business"},
+  "futures-contracts": {title: "期货合约", path: "config/futures-contracts", columns: ["market_code", "symbol", "product_code", "expiry_date", "multiplier"], fields: ["market_code", "symbol", "product_code", "exchange_symbol", "multiplier", "expiry_date", "end_trade_time", "main_level"], keyFields: ["market_code", "symbol"], group: "business"},
+  snapshots: {title: "资产快照", path: "operations/asset-snapshots", readonly: true, columns: ["project_id", "fund_id", "as_of", "available_balance", "total_value", "risk_degree"], group: "readonly"},
+  marketdata: {title: "行情库状态", path: "market-data/summary", readonly: true, columns: ["table", "rows", "first_time", "last_time", "detail"], group: "readonly"},
+  audit: {title: "配置审计", path: "audit", readonly: true, columns: ["created_at", "actor", "action", "resource", "entity_key"], group: "readonly"},
+};
+
+const FIELD_LABELS = {
+  version: "版本号", status: "状态", description: "版本说明", created_by: "创建人", published_at: "发布时间",
+  market_code: "市场代码", exchange_code: "交易所代码", name: "名称", full_name: "全称", enabled: "启用", remark: "备注",
+  colo_id: "机房编号", fund_id: "产品编号", fund_code: "产品代码", fund_type: "柜台产品类型",
+  valuation_type: "估值方式", bond_risk_value: "债券风控估值", long_stop_value: "长期停牌估值",
+  allowed_security_types: "可交易证券类别", allowed_directions: "允许交易方向", allowed_markets: "允许市场",
+  project_id: "资产单元编号", initial_balance: "初始资金", project_type: "资产类型", hedge_flags: "期货交易类型", default_flag: "默认账户",
+  account_id: "资金账户", broker_id: "券商编号", broker_name: "券商名称", account_type: "账户类型", open_date: "开户日期",
+  external_account_id: "外部资金账户", symbol: "证券代码", security_type: "证券类别", exchange_symbol: "交易所代码",
+  suspended: "停牌", buy_allowed: "允许买入", sell_allowed: "允许卖出", cancel_allowed: "允许撤单", price_tick: "最小价格单位",
+  buy_unit: "买入单位", sell_unit: "卖出单位", max_quantity: "最大数量", min_quantity: "最小数量",
+  product_code: "期货品种代码", trading_unit: "交易单位", price_limit: "涨跌停规则", margin_ratio: "保证金比例",
+  contract_month_rule: "合约月份规则", last_trade_day_rule: "最后交易日规则", delivery_rule: "交割规则",
+  expiry_date: "到期日", end_trade_time: "最后交易时间", multiplier: "合约乘数", main_level: "主力合约级别",
+  as_of: "快照时间", available_balance: "可用资金", total_value: "资产总值", risk_degree: "风险度",
+  rows: "数据行数", first_time: "首条时间", last_time: "末条时间", table: "数据表", detail: "说明",
+  created_at: "操作时间", actor: "操作人", action: "操作", resource: "资源", entity_key: "对象键",
+};
+
+const DECIMAL_FIELDS = new Set(["initial_balance", "price_tick", "margin_ratio"]);
+const INTEGER_FIELDS = new Set(["colo_id", "fund_id", "project_id", "buy_unit", "sell_unit", "max_quantity", "min_quantity", "trading_unit", "multiplier"]);
+const BOOLEAN_FIELDS = new Set(["enabled", "default_flag", "suspended", "buy_allowed", "sell_allowed", "cancel_allowed"]);
+const SELECT_OPTIONS = {
+  valuation_type: [["1", "均价"], ["2", "最新价"], ["3", "昨收价"]],
+  bond_risk_value: [["1", "净价"], ["2", "全价"]],
+  long_stop_value: [["1", "停牌前最新价"], ["2", "公允价"]],
+  status: [["1", "启用/上市"], ["2", "结束"], ["3", "注销"]],
+  project_type: [["0", "普通资产"], ["1", "信用资产"], ["2", "期货资产"], ["3", "期权资产"]],
+  hedge_flags: [["0", "投机"], ["1", "套保"], ["2", "套利"]],
+  account_type: [["0", "普通"], ["1", "信用"], ["2", "期货"], ["3", "期权"]],
+};
+
+function labelFor(field) { return FIELD_LABELS[field] || field; }
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, character => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"})[character]);
+}
+function formatValue(column, value) {
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (column === "status") return ({DRAFT: "草稿", VALIDATED: "已校验", PUBLISHED: "已发布", RETIRED: "已退役"})[value] || (SELECT_OPTIONS.status.find(option => option[0] === value)?.[1] || value);
+  return value ?? "";
+}
+
+const navTargets = {
+  version: document.getElementById("navVersion"),
+  base: document.getElementById("navBase"),
+  business: document.getElementById("navBusiness"),
+  readonly: document.getElementById("navReadonly"),
+};
+
+function log(message) {
+  const logBox = document.getElementById("log");
+  const line = document.createElement("div");
+  line.textContent = `${new Date().toLocaleTimeString()}  ${message}`;
+  logBox.prepend(line);
+}
+
+function headers() {
+  return state.sessionId ? {"X-QF-Session-ID": state.sessionId} : {};
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(`${state.serviceUrl}/v1/${path}`, {
+    headers: {"Content-Type": "application/json", ...headers(), ...(options.headers || {})},
+    ...options,
+  });
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!response.ok) {
+    throw new Error(typeof data === "string" ? data : JSON.stringify(data));
+  }
+  return data;
+}
+
+function buildNav() {
+  Object.entries(MODULES).forEach(([key, meta]) => {
+    const button = document.createElement("button");
+    button.textContent = meta.title;
+    button.onclick = () => selectModule(key);
+    button.dataset.module = key;
+    navTargets[meta.group].appendChild(button);
+  });
+}
+
+function setActiveNav(module) {
+  document.querySelectorAll(".nav button").forEach(button => {
+    button.classList.toggle("active", button.dataset.module === module);
+  });
+}
+
+function renderSummary(metrics) {
+  const root = document.getElementById("summary");
+  root.innerHTML = "";
+  metrics.forEach(metric => {
+    const card = document.createElement("div");
+    card.className = "metric";
+    card.innerHTML = `<label>${metric.label}</label><strong>${metric.value}</strong><div style="color:var(--muted);font-size:12px;margin-top:8px;">${metric.detail || ''}</div>`;
+    root.appendChild(card);
+  });
+}
+
+function renderTable(columns, rows) {
+  document.getElementById("thead").innerHTML = `<tr>${columns.map(column => `<th>${escapeHtml(labelFor(column))}</th>`).join("")}</tr>`;
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="${columns.length}" class="empty">当前没有数据</td></tr>`;
+    return;
+  }
+  rows.forEach(row => {
+    const tr = document.createElement("tr");
+    tr.onclick = () => selectRow(row.key || row.version || "", row);
+    tr.innerHTML = columns.map(column => {
+      const value = row[column] ?? "";
+      if (column === "status") {
+        const style = value === "PUBLISHED" ? "ok" : value === "VALIDATED" ? "warn" : value === "RETIRED" ? "bad" : "";
+        return `<td><span class="pill ${style}">${escapeHtml(formatValue(column, value))}</span></td>`;
+      }
+      return `<td>${escapeHtml(formatValue(column, value))}</td>`;
+    }).join("");
+    tbody.appendChild(tr);
+  });
+}
+
+function fieldControl(name, value) {
+  if (BOOLEAN_FIELDS.has(name)) {
+    return `<select data-field="${name}"><option value="true" ${value ? "selected" : ""}>是</option><option value="false" ${!value ? "selected" : ""}>否</option></select>`;
+  }
+  if (SELECT_OPTIONS[name]) {
+    return `<select data-field="${name}">${SELECT_OPTIONS[name].map(([option, text]) => `<option value="${option}" ${String(value) === option ? "selected" : ""}>${text}</option>`).join("")}</select>`;
+  }
+  if (String(name).includes("remark") || String(name).includes("rule") || name === "allowed_directions" || name === "allowed_markets" || name === "allowed_security_types") {
+    return `<textarea data-field="${name}">${escapeHtml(value)}</textarea>`;
+  }
+  const inputMode = DECIMAL_FIELDS.has(name) || INTEGER_FIELDS.has(name) ? "decimal" : "text";
+  return `<input data-field="${name}" inputmode="${inputMode}" value="${escapeHtml(value)}">`;
+}
+
+function renderDetail(module, row) {
+  const meta = MODULES[module];
+  document.getElementById("detailTitle").textContent = meta.title;
+  document.getElementById("detailHint").textContent = meta.readonly ? "当前模块仅支持查看。" : "在草稿版本中编辑当前配置项。";
+  const root = document.getElementById("detailForm");
+  root.innerHTML = "";
+  document.getElementById("saveButton").style.display = meta.readonly ? "none" : "inline-block";
+  document.getElementById("deleteButton").style.display = meta.readonly ? "none" : "inline-block";
+  if (!meta.fields) {
+    root.innerHTML = `<div class="empty">选择一行后显示详情</div>`;
+    return;
+  }
+  const values = row || Object.fromEntries(meta.fields.map(field => [field, ""]));
+  meta.fields.forEach(field => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "field";
+    wrapper.innerHTML = `<label>${escapeHtml(labelFor(field))}</label>${fieldControl(field, values[field])}`;
+    root.appendChild(wrapper);
+  });
+}
+
+function currentPayload() {
+  const payload = {};
+  document.querySelectorAll("#detailForm [data-field]").forEach(input => {
+    if (input.tagName === "SELECT" && (input.value === "true" || input.value === "false")) {
+      payload[input.dataset.field] = input.value === "true";
+    } else if (INTEGER_FIELDS.has(input.dataset.field)) {
+      payload[input.dataset.field] = input.value === "" ? "" : Number(input.value);
+    } else {
+      // Decimal amounts stay strings until Pydantic creates Decimal. Converting
+      // money through JavaScript Number would lose precision for large accounts.
+      payload[input.dataset.field] = input.value;
+    }
+  });
+  return payload;
+}
+
+async function loadVersions() {
+  const items = await api("config/versions");
+  const published = items.find(item => item.status === "PUBLISHED");
+  state.publishedVersion = published ? published.version : null;
+  if (state.version == null) {
+    state.version = published ? published.version : (items[0]?.version ?? null);
+  }
+  state.currentRows = items;
+  state.total = items.length;
+  renderSummary([
+    {label: "已发布版本", value: state.publishedVersion ?? "无", detail: "交易核心后续只消费已发布版本"},
+    {label: "当前编辑版本", value: state.version ?? "无", detail: "草稿和校验在此版本进行"},
+    {label: "版本总数", value: items.length, detail: "草稿、已校验、已发布、已退役"},
+    {label: "当前身份", value: state.actor || "未登录", detail: "所有写入都要通过 Casbin"},
+  ]);
+  renderTable(MODULES.versions.columns, items);
+  renderDetail("versions", items.find(item => item.version === state.version) || items[0] || null);
+  const selector = document.getElementById("versionSelector");
+  if (selector) {
+    selector.innerHTML = items.map(item => `<option value="${item.version}" ${item.version === state.version ? "selected" : ""}>版本 ${item.version} · ${formatValue("status", item.status)}</option>`).join("");
+  }
+}
+
+async function selectModule(module) {
+  state.currentModule = module;
+  state.selectedRow = null;
+  state.selectedKey = "";
+  state.offset = 0;
+  state.query = "";
+  setActiveNav(module);
+  const meta = MODULES[module];
+  document.getElementById("pageTitle").textContent = meta.title;
+  document.getElementById("crumbs").textContent = `业务后台 / ${meta.title}`;
+  document.getElementById("toolbar").innerHTML = "";
+  renderDetail(module, null);
+  if (module === "versions") {
+    renderVersionToolbar();
+    return loadVersions();
+  }
+  renderModuleToolbar(meta);
+  if (module === "marketdata") {
+    const summary = await api("market-data/summary");
+    renderSummary([
+      {label: "是否配置", value: summary.configured ? "已配置" : "未配置", detail: summary.detail || summary.table},
+      {label: "总行数", value: summary.rows ?? "-", detail: "只读行情库，不在后台写入"},
+      {label: "首条时间", value: summary.first_time ?? "-", detail: summary.table},
+      {label: "末条时间", value: summary.last_time ?? "-", detail: summary.table},
+    ]);
+    renderTable(meta.columns, [summary]);
+    return;
+  }
+  if (module === "snapshots") {
+    const rows = await api("operations/asset-snapshots");
+    renderSummary([{label: "资产快照数", value: rows.length, detail: "由交易核心同步，前台只读"}]);
+    renderTable(meta.columns, rows.map((row, index) => ({key: String(index), ...row})));
+    return;
+  }
+  if (module === "audit") {
+    const page = await api("audit");
+    renderSummary([{label: "审计条数", value: page.total, detail: "配置修改、校验、发布记录"}]);
+    renderTable(meta.columns, page.items.map((row, index) => ({key: String(index), ...row})));
+    return;
+  }
+  const page = await api(`${meta.path}?version=${state.version}&offset=${state.offset}&limit=${state.pageSize}`);
+  state.currentRows = page.items;
+  state.total = page.total;
+  renderSummary([
+    {label: "当前版本", value: state.version ?? "无", detail: "未发布版本不会被交易核心读取"},
+    {label: "记录数", value: page.total, detail: meta.title},
+    {label: "已发布版本", value: state.publishedVersion ?? "无", detail: "可作为复制来源"},
+    {label: "模块", value: meta.title, detail: meta.readonly ? "只读" : "可编辑"},
+  ]);
+  renderTable(meta.columns, page.items);
+}
+
+function renderVersionToolbar() {
+  const bar = document.getElementById("toolbar");
+  bar.innerHTML = `
+    <button class="primary" id="newVersion">新建草稿版本</button>
+    <button class="warn" id="validateVersion">校验当前版本</button>
+    <button class="good" id="publishVersion">发布当前版本</button>
+    <label>当前版本 <select id="versionSelector"></select></label>
+  `;
+  document.getElementById("newVersion").onclick = async () => {
+    const description = prompt("请输入版本说明", "业务配置草稿");
+    if (description == null) return;
+    const selected = state.currentRows.find(item => item.version === state.version);
+    const sourceVersion = selected && ["PUBLISHED", "RETIRED"].includes(selected.status) ? state.version : null;
+    await api("config/versions", {method: "POST", body: JSON.stringify({description, source_version: sourceVersion})});
+    log("已创建新的草稿版本");
+    await loadVersions();
+  };
+  document.getElementById("validateVersion").onclick = async () => {
+    const result = await api(`config/versions/${state.version}/validate`);
+    log(`校验完成：${result.valid ? "通过" : "失败"}`);
+    alert(result.issues.length ? result.issues.map(issue => `${issue.level} ${issue.resource} ${issue.entity_key} ${issue.message}`).join("\n") : "校验通过");
+    await loadVersions();
+  };
+  document.getElementById("publishVersion").onclick = async () => {
+    await api(`config/versions/${state.version}/publish`, {method: "POST"});
+    log(`已发布版本 ${state.version}`);
+    await loadVersions();
+  };
+  document.getElementById("versionSelector").onchange = event => {
+    state.version = Number(event.target.value);
+    state.selectedKey = "";
+    state.selectedRow = null;
+    loadVersions().catch(error => alert(error.message));
+  };
+}
+
+function renderModuleToolbar(meta) {
+  const bar = document.getElementById("toolbar");
+  bar.innerHTML = `
+    <label>编辑版本 <input id="versionInput" value="${state.version ?? ""}" style="width:120px"></label>
+    <label>搜索 <input id="searchInput" placeholder="代码、名称、账户、产品"></label>
+    <button class="primary" id="refreshButton">刷新</button>
+    <button id="previousPage">上一页</button>
+    <span id="pageStatus" style="color:var(--muted);font-size:12px;"></span>
+    <button id="nextPage">下一页</button>
+    ${meta.readonly ? "" : '<button id="newRowButton">新增空白记录</button>'}
+  `;
+  document.getElementById("refreshButton").onclick = async () => {
+    state.version = Number(document.getElementById("versionInput").value || 0) || state.version;
+    state.query = document.getElementById("searchInput").value.trim();
+    state.offset = 0;
+    await loadConfigPage(meta);
+    log(`已刷新 ${meta.title}`);
+  };
+  document.getElementById("previousPage").onclick = async () => {
+    state.offset = Math.max(0, state.offset - state.pageSize);
+    await loadConfigPage(meta);
+  };
+  document.getElementById("nextPage").onclick = async () => {
+    if (state.offset + state.pageSize >= state.total) return;
+    state.offset += state.pageSize;
+    await loadConfigPage(meta);
+  };
+  if (!meta.readonly) {
+    document.getElementById("newRowButton").onclick = () => {
+      state.selectedRow = null;
+      state.selectedKey = "";
+      renderDetail(state.currentModule, null);
+    };
+  }
+}
+
+async function loadConfigPage(meta) {
+  const page = await api(`${meta.path}?version=${state.version}&query=${encodeURIComponent(state.query)}&offset=${state.offset}&limit=${state.pageSize}`);
+  state.currentRows = page.items;
+  state.total = page.total;
+  renderTable(meta.columns, page.items);
+  const status = document.getElementById("pageStatus");
+  const previous = document.getElementById("previousPage");
+  const next = document.getElementById("nextPage");
+  if (status) status.textContent = page.total ? `${state.offset + 1}-${Math.min(state.offset + page.limit, page.total)} / ${page.total}` : "0 / 0";
+  if (previous) previous.disabled = state.offset === 0;
+  if (next) next.disabled = state.offset + page.limit >= page.total;
+}
+
+function selectRow(key, row) {
+  if (state.currentModule === "versions") {
+    state.version = Number(row.version);
+    const selector = document.getElementById("versionSelector");
+    if (selector) selector.value = String(state.version);
+  }
+  state.selectedKey = key;
+  state.selectedRow = row;
+  renderDetail(state.currentModule, row);
+}
+
+async function saveCurrent() {
+  const meta = MODULES[state.currentModule];
+  if (!meta.fields) return;
+  const payload = currentPayload();
+  const key = state.selectedKey || meta.keyFields
+    .map(field => String(payload[field])).filter(Boolean).join(":");
+  if (!key) {
+    alert("缺少主键字段");
+    return;
+  }
+  await api(`${meta.path}/${key}?version=${state.version}`, {method: "PUT", body: JSON.stringify(payload)});
+  log(`已保存 ${meta.title} ${key}`);
+  await selectModule(state.currentModule);
+}
+
+async function deleteCurrent() {
+  const meta = MODULES[state.currentModule];
+  if (!state.selectedKey || !confirm(`确认删除 ${state.selectedKey} 吗？`)) return;
+  await api(`${meta.path}/${state.selectedKey}?version=${state.version}`, {method: "DELETE"});
+  log(`已删除 ${meta.title} ${state.selectedKey}`);
+  state.selectedKey = "";
+  state.selectedRow = null;
+  await selectModule(state.currentModule);
+}
+
+document.getElementById("saveButton").onclick = () => saveCurrent().catch(error => alert(error.message));
+document.getElementById("deleteButton").onclick = () => deleteCurrent().catch(error => alert(error.message));
+
+document.getElementById("loginForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const errorBox = document.getElementById("loginError");
+  errorBox.textContent = "";
+  try {
+    state.serviceUrl = document.getElementById("serviceUrl").value.trim().replace(/\/$/, "");
+    const response = await fetch(`${state.serviceUrl}/v1/sessions/development`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({username: document.getElementById("username").value.trim(), password: document.getElementById("password").value}),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(JSON.stringify(payload));
+    state.sessionId = payload.session_id;
+    state.actor = payload.actor || document.getElementById("username").value.trim();
+    document.getElementById("sessionText").textContent = `${state.actor}  已登录  ${state.serviceUrl}`;
+    document.getElementById("loginOverlay").style.display = "none";
+    log("登录成功");
+    await selectModule("versions");
+  } catch (error) {
+    errorBox.textContent = error.message;
+  }
+});
+
+buildNav();
+</script>
+</body>
+</html>
