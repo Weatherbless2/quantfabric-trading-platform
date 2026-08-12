@@ -173,6 +173,8 @@ const state = {
   sessionId: "",
   actor: "",
   version: null,
+  versionStatus: "",
+  versionStatuses: {},
   publishedVersion: null,
   currentModule: "versions",
   currentRows: [],
@@ -338,23 +340,46 @@ function fieldControl(name, value) {
   return `<input data-field="${name}" inputmode="${inputMode}" value="${escapeHtml(value)}">`;
 }
 
+function defaultValues(meta) {
+  const values = Object.fromEntries(meta.fields.map(field => [field, ""]));
+  if (meta.path === "config/securities") {
+    Object.assign(values, {
+      suspended: false, buy_allowed: true, sell_allowed: true, cancel_allowed: true,
+      price_tick: "0.01", buy_unit: 100, sell_unit: 100, max_quantity: 0, min_quantity: 0,
+    });
+  } else if (meta.path === "config/markets" || meta.path === "config/colocations" || meta.path === "config/projects") {
+    values.enabled = true;
+  } else if (meta.path === "config/account-links") {
+    values.account_type = "0";
+    values.default_flag = true;
+  }
+  return values;
+}
+
+function canEditCurrentVersion() {
+  return state.versionStatus === "DRAFT";
+}
+
 function renderDetail(module, row) {
   const meta = MODULES[module];
   document.getElementById("detailTitle").textContent = meta.title;
-  document.getElementById("detailHint").textContent = meta.readonly ? "当前模块仅支持查看。" : "在草稿版本中编辑当前配置项。";
+  document.getElementById("detailHint").textContent = meta.readonly ? "当前模块仅支持查看。" :
+    canEditCurrentVersion() ? "在草稿版本中编辑当前配置项。带 * 的字段为必填主键。" :
+    "当前是已发布或已校验版本，只读。请在版本中心复制为草稿后编辑。";
   const root = document.getElementById("detailForm");
   root.innerHTML = "";
-  document.getElementById("saveButton").style.display = meta.readonly ? "none" : "inline-block";
-  document.getElementById("deleteButton").style.display = meta.readonly ? "none" : "inline-block";
+  document.getElementById("saveButton").style.display = !meta.readonly && canEditCurrentVersion() ? "inline-block" : "none";
+  document.getElementById("deleteButton").style.display = !meta.readonly && canEditCurrentVersion() ? "inline-block" : "none";
   if (!meta.fields) {
     root.innerHTML = `<div class="empty">选择一行后显示详情</div>`;
     return;
   }
-  const values = row || Object.fromEntries(meta.fields.map(field => [field, ""]));
+  const values = row || defaultValues(meta);
   meta.fields.forEach(field => {
     const wrapper = document.createElement("div");
     wrapper.className = "field";
-    wrapper.innerHTML = `<label>${escapeHtml(labelFor(field))}</label>${fieldControl(field, values[field])}`;
+    const required = meta.keyFields.includes(field) ? " <span style=\"color:var(--accent)\">*</span>" : "";
+    wrapper.innerHTML = `<label>${escapeHtml(labelFor(field))}${required}</label>${fieldControl(field, values[field])}`;
     root.appendChild(wrapper);
   });
 }
@@ -382,6 +407,8 @@ async function loadVersions() {
   if (state.version == null) {
     state.version = published ? published.version : (items[0]?.version ?? null);
   }
+  state.versionStatuses = Object.fromEntries(items.map(item => [item.version, item.status]));
+  state.versionStatus = state.versionStatuses[state.version] || "";
   state.currentRows = items;
   state.total = items.length;
   renderSummary([
@@ -495,10 +522,11 @@ function renderModuleToolbar(meta) {
     <button id="previousPage">上一页</button>
     <span id="pageStatus" style="color:var(--muted);font-size:12px;"></span>
     <button id="nextPage">下一页</button>
-    ${meta.readonly ? "" : '<button id="newRowButton">新增空白记录</button>'}
+    ${meta.readonly || !canEditCurrentVersion() ? "" : '<button id="newRowButton">新增记录</button>'}
   `;
   document.getElementById("refreshButton").onclick = async () => {
     state.version = Number(document.getElementById("versionInput").value || 0) || state.version;
+    state.versionStatus = state.versionStatuses[state.version] || "";
     state.query = document.getElementById("searchInput").value.trim();
     state.offset = 0;
     await loadConfigPage(meta);
@@ -538,6 +566,7 @@ async function loadConfigPage(meta) {
 function selectRow(key, row) {
   if (state.currentModule === "versions") {
     state.version = Number(row.version);
+    state.versionStatus = row.status || "";
     const selector = document.getElementById("versionSelector");
     if (selector) selector.value = String(state.version);
   }
@@ -550,12 +579,17 @@ async function saveCurrent() {
   const meta = MODULES[state.currentModule];
   if (!meta.fields) return;
   const payload = currentPayload();
-  const key = state.selectedKey || meta.keyFields
-    .map(field => String(payload[field])).filter(Boolean).join(":");
-  if (!key) {
-    alert("缺少主键字段");
+  if (!canEditCurrentVersion()) {
+    alert("当前版本不是草稿，不能保存。请到版本中心新建草稿版本后再编辑。");
     return;
   }
+  const missingFields = meta.keyFields.filter(field => !String(payload[field] ?? "").trim());
+  if (missingFields.length) {
+    alert(`请填写必填主键字段：${missingFields.map(labelFor).join("、")}`);
+    return;
+  }
+  const key = state.selectedKey || meta.keyFields
+    .map(field => String(payload[field])).filter(Boolean).join(":");
   await api(`${meta.path}/${key}?version=${state.version}`, {method: "PUT", body: JSON.stringify(payload)});
   log(`已保存 ${meta.title} ${key}`);
   await selectModule(state.currentModule);
