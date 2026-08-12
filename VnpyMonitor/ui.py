@@ -21,34 +21,86 @@ def normalize_search_text(value: str) -> str:
 
 
 STYLE = """
-QWidget { color: #17202a; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 13px; }
-QMainWindow, #central { background: #f4f6f8; }
-#header { background: #ffffff; border-bottom: 1px solid #dfe4ea; }
-#brand { font-size: 19px; font-weight: 700; color: #17202a; }
-#statusOnline { color: #166534; background: #e8f5ec; border: 1px solid #b9dfc5; border-radius: 4px; padding: 5px 9px; }
-#statusOffline { color: #991b1b; background: #fce8e8; border: 1px solid #efb5b5; border-radius: 4px; padding: 5px 9px; }
-#panel { background: #ffffff; border: 1px solid #dfe4ea; border-radius: 6px; }
-#panelTitle { font-size: 15px; font-weight: 700; color: #27313c; }
-#quoteSymbol { font-size: 17px; font-weight: 700; color: #27313c; }
-#quoteMeta { color: #68717d; }
-#quotePrice { font-size: 28px; font-weight: 700; color: #17202a; }
-#quoteChange { font-size: 16px; font-weight: 700; }
-#quoteField { color: #68717d; }
-#quoteFieldValue { font-weight: 600; color: #27313c; }
-#positive { color: #c0392b; font-weight: 700; }
-#negative { color: #16825d; font-weight: 700; }
-#buyButton { color: #ffffff; background: #c0392b; border-color: #a93226; font-weight: 700; }
-#sellButton { color: #ffffff; background: #16825d; border-color: #116b4d; font-weight: 700; }
-#buyButton:disabled, #sellButton:disabled { color: #707780; background: #e1e5e9; border-color: #c9cfd5; }
-QPushButton { background: #ffffff; border: 1px solid #cfd6de; border-radius: 4px; padding: 7px 12px; }
-QPushButton:hover { background: #edf5f7; border-color: #4f8694; }
-QTabWidget::pane { background: #ffffff; border: 1px solid #dfe4ea; }
-QTabBar::tab { background: #e9edf1; padding: 9px 18px; border: 1px solid #dfe4ea; border-bottom: none; }
-QTabBar::tab:selected { background: #ffffff; color: #0b6574; font-weight: 700; }
-QTableWidget { background: #ffffff; alternate-background-color: #f7f9fa; border: none; gridline-color: #e7ebef; selection-background-color: #d8ebef; }
-QHeaderView::section { background: #eef2f4; color: #4d5966; border: none; border-right: 1px solid #dfe4ea; border-bottom: 1px solid #dfe4ea; padding: 7px; font-weight: 600; }
-QScrollBar:vertical { width: 10px; background: #eef1f3; }
-QScrollBar::handle:vertical { background: #b7c1ca; min-height: 24px; border-radius: 4px; }
+QWidget {
+    color: #dbe5ee;
+    font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+}
+QMainWindow, #central { background: #111820; }
+#header { background: #151d26; border-bottom: 1px solid #293745; }
+#brandMark {
+    min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px;
+    color: #ffffff; background: #d94f49; border-radius: 3px;
+    font-size: 12px; font-weight: 700; qproperty-alignment: AlignCenter;
+}
+#brand { font-size: 18px; font-weight: 700; color: #f2f6fa; }
+#marketLabel { color: #8ca2b4; padding-left: 10px; }
+#statusOnline {
+    color: #66d9ad; background: #153c35; border: 1px solid #246552;
+    border-radius: 3px; padding: 4px 8px;
+}
+#statusOffline {
+    color: #f09089; background: #412a2d; border: 1px solid #744248;
+    border-radius: 3px; padding: 4px 8px;
+}
+#panel { background: #171f28; border: 1px solid #293846; border-radius: 3px; }
+#panelTitle { font-size: 13px; font-weight: 700; color: #edf2f7; }
+#quoteSymbol { font-size: 17px; font-weight: 700; color: #edf2f7; }
+#quoteMeta { color: #8397a8; }
+#quotePrice { font-size: 29px; font-weight: 700; color: #edf2f7; }
+#quoteChange { font-size: 15px; font-weight: 700; }
+#quoteField { color: #8196a8; }
+#quoteFieldValue { font-weight: 600; color: #dbe5ee; }
+#positive { color: #f15b54; font-weight: 700; }
+#negative { color: #25bd8a; font-weight: 700; }
+#buyButton { color: #ffffff; background: #d94f49; border: 1px solid #f06a62; font-weight: 700; }
+#buyButton:hover { background: #ed5e56; }
+#sellButton { color: #ffffff; background: #158a67; border: 1px solid #25ae84; font-weight: 700; }
+#sellButton:hover { background: #1aa478; }
+#buyButton:disabled, #sellButton:disabled {
+    color: #748492; background: #27313c; border-color: #354250;
+}
+QPushButton {
+    background: #202b36; border: 1px solid #354656; border-radius: 3px;
+    padding: 7px 12px; color: #dbe5ee;
+}
+QPushButton:hover { background: #2a3744; border-color: #547187; }
+QPushButton:pressed { background: #18212a; }
+QLineEdit, QAbstractSpinBox {
+    background: #111820; border: 1px solid #344555; border-radius: 3px;
+    padding: 5px 7px; color: #e6edf3; selection-background-color: #38546b;
+}
+QLineEdit:focus, QAbstractSpinBox:focus { border-color: #66869e; }
+QComboBox::drop-down, QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+    border: none; width: 17px; background: #202b36;
+}
+QTabWidget::pane { background: #171f28; border: 1px solid #293846; top: -1px; }
+QTabBar::tab {
+    background: #151d26; color: #889cab; padding: 8px 18px;
+    border: 1px solid #293846; border-bottom: none; margin-right: 1px;
+}
+QTabBar::tab:selected { background: #171f28; color: #f1f5f8; font-weight: 700; border-top: 2px solid #d94f49; }
+QTableWidget {
+    background: #171f28; alternate-background-color: #1a2530; border: none;
+    gridline-color: #263440; selection-background-color: #2a4151;
+    selection-color: #ffffff;
+}
+QTableWidget::item { padding: 0 6px; }
+QHeaderView::section {
+    background: #202b36; color: #9fb0bd; border: none;
+    border-right: 1px solid #2b3a47; border-bottom: 1px solid #2b3a47;
+    padding: 6px; font-weight: 600;
+}
+QDockWidget { color: #dbe5ee; font-weight: 700; }
+QDockWidget::title { background: #151d26; padding: 9px 10px; border-bottom: 1px solid #293846; }
+QDockWidget::close-button, QDockWidget::float-button { background: transparent; border: none; }
+QSplitter::handle { background: #111820; }
+QSplitter::handle:hover { background: #334553; }
+QScrollBar:vertical { width: 9px; background: #151d26; margin: 0; }
+QScrollBar::handle:vertical { background: #3c5161; min-height: 28px; border-radius: 3px; }
+QScrollBar::handle:vertical:hover { background: #536d80; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QToolTip { color: #edf2f7; background: #202b36; border: 1px solid #43596a; }
 """
 
 
@@ -63,14 +115,15 @@ class OrderBookWidget(QtWidgets.QWidget):
         self.table = QtWidgets.QTableWidget(10, 3)
         self.table.setHorizontalHeaderLabels(["档位", "价格", "数量"])
         self.table.verticalHeader().hide()
-        self.table.verticalHeader().setMinimumSectionSize(16)
-        self.table.verticalHeader().setDefaultSectionSize(17)
-        self.table.horizontalHeader().setFixedHeight(25)
+        self.table.verticalHeader().setMinimumSectionSize(18)
+        self.table.verticalHeader().setDefaultSectionSize(20)
+        self.table.horizontalHeader().setFixedHeight(28)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(7)
         title = QtWidgets.QLabel("五档行情")
         title.setObjectName("panelTitle")
         layout.addWidget(title)
@@ -117,6 +170,8 @@ class SecurityMasterTable(QtWidgets.QTableWidget):
         self.verticalHeader().hide()
         self.setEditTriggers(self.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.setAlternatingRowColors(True)
         self.setSortingEnabled(False)
         for row, security in enumerate(securities):
             ticker = str(security.get("ticker", ""))
@@ -140,13 +195,13 @@ class SecurityUniversePanel(QtWidgets.QWidget):
         super().__init__()
         self.securities = securities
         self.filter_edit = QtWidgets.QLineEdit()
-        self.filter_edit.setPlaceholderText("输入代码或名称检索")
+        self.filter_edit.setPlaceholderText("搜索代码或名称")
         self.filter_edit.setClearButtonEnabled(True)
         self.table = SecurityMasterTable(securities)
         self.table.cellClicked.connect(select_callback)
         self.filter_edit.textChanged.connect(self._filter_rows)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(8, 7, 8, 8)
         layout.setSpacing(6)
         layout.addWidget(self.filter_edit)
         layout.addWidget(self.table, 1)
@@ -229,8 +284,8 @@ class QuoteOverview(QtWidgets.QWidget):
         price.addWidget(self.change)
 
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(20)
+        layout.setContentsMargins(14, 9, 14, 9)
+        layout.setSpacing(18)
         layout.addLayout(title)
         layout.addLayout(price)
         for title_text, field in self.fields:
@@ -286,23 +341,24 @@ class RealtimeChartWidget(ChartWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setBackground("#ffffff")
+        self.setBackground("#171f28")
         self.add_plot("price", minimum_height=120, hide_x_axis=True)
         self.add_item(VisibleCandleItem, "candle", "price")
         self.add_plot("volume", minimum_height=45)
         self.add_item(VisibleVolumeItem, "volume", "volume")
         self.close_curve = self.get_plot("price").plot(
-            pen=QtGui.QPen(QtGui.QColor("#c0392b"), 2),
+            pen=QtGui.QPen(QtGui.QColor("#f15b54"), 2),
             symbol="o",
-            symbolSize=7,
-            symbolPen=QtGui.QPen(QtGui.QColor("#c0392b")),
-            symbolBrush=QtGui.QBrush(QtGui.QColor("#ffffff")),
+            symbolSize=6,
+            symbolPen=QtGui.QPen(QtGui.QColor("#f15b54")),
+            symbolBrush=QtGui.QBrush(QtGui.QColor("#171f28")),
         )
         for plot in self.get_all_plots():
-            plot.getAxis("right").setPen(QtGui.QPen(QtGui.QColor("#68717d")))
-            plot.getAxis("right").setTextPen(QtGui.QPen(QtGui.QColor("#4d5966")))
-            plot.getAxis("bottom").setPen(QtGui.QPen(QtGui.QColor("#68717d")))
-            plot.getAxis("bottom").setTextPen(QtGui.QPen(QtGui.QColor("#4d5966")))
+            plot.showGrid(x=True, y=True, alpha=0.18)
+            plot.getAxis("right").setPen(QtGui.QPen(QtGui.QColor("#53697a")))
+            plot.getAxis("right").setTextPen(QtGui.QPen(QtGui.QColor("#a7b7c3")))
+            plot.getAxis("bottom").setPen(QtGui.QPen(QtGui.QColor("#53697a")))
+            plot.getAxis("bottom").setTextPen(QtGui.QPen(QtGui.QColor("#a7b7c3")))
 
     def update_close_curve(self, bars) -> None:
         self.close_curve.setData(
@@ -348,7 +404,7 @@ class TradingPanel(QtWidgets.QWidget):
         self.quote_ready = False
         self.setObjectName("panel")
 
-        title = QtWidgets.QLabel("普通股票委托")
+        title = QtWidgets.QLabel("快速委托")
         title.setObjectName("panelTitle")
         self.symbol = QtWidgets.QLabel("300007 · SZSE")
         self.price = QtWidgets.QDoubleSpinBox()
@@ -361,7 +417,7 @@ class TradingPanel(QtWidgets.QWidget):
         self.volume.setSingleStep(100)
         self.volume.setValue(100)
         self.volume.setSuffix(" 股")
-        self.state = QtWidgets.QLabel("C++ 原生会话连接中")
+        self.state = QtWidgets.QLabel("交易会话连接中")
         self.state.setObjectName("statusOffline")
 
         heading = QtWidgets.QHBoxLayout()
@@ -370,6 +426,7 @@ class TradingPanel(QtWidgets.QWidget):
         heading.addWidget(self.symbol)
 
         form = QtWidgets.QHBoxLayout()
+        form.setSpacing(5)
         form.addWidget(QtWidgets.QLabel("限价"))
         form.addWidget(self.price, 1)
         form.addWidget(QtWidgets.QLabel("数量"))
@@ -386,13 +443,13 @@ class TradingPanel(QtWidgets.QWidget):
         buttons.addWidget(self.sell_button)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
         layout.addLayout(heading)
         layout.addLayout(form)
         layout.addLayout(buttons)
         layout.addWidget(self.state)
-        self.setMaximumHeight(170)
+        self.setMaximumHeight(168)
         self.set_trading_enabled(False)
 
     def set_symbol(self, vt_symbol: str, tick=None) -> None:
@@ -496,18 +553,18 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
 
         content = QtWidgets.QWidget()
         content_layout = QtWidgets.QVBoxLayout(content)
-        content_layout.setContentsMargins(18, 14, 18, 16)
-        content_layout.setSpacing(12)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(8)
         root.addWidget(content, 1)
 
         market_split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         left_market = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left_market)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        left_layout.setSpacing(5)
         self.quote_overview = QuoteOverview()
         left_layout.addWidget(self.quote_overview)
-        self.chart_title = QtWidgets.QLabel("1 分钟 K 线")
+        self.chart_title = QtWidgets.QLabel("分时 K 线")
         chart_title = self.chart_title
         chart_title.setObjectName("panelTitle")
         left_layout.addWidget(chart_title)
@@ -519,12 +576,12 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         right_column = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_column)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
+        right_layout.setSpacing(8)
         right_layout.addWidget(self.order_book, 1)
         self.trading_panel = TradingPanel(self.main_engine)
         right_layout.addWidget(self.trading_panel)
         market_split.addWidget(right_column)
-        market_split.setSizes([1000, 360])
+        market_split.setSizes([1020, 350])
         content_layout.addWidget(market_split, 5)
 
         tabs = QtWidgets.QTabWidget()
@@ -540,6 +597,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
                 QtWidgets.QHeaderView.ResizeMode.ResizeToContents
             )
             monitor.horizontalHeader().setStretchLastSection(True)
+            monitor.verticalHeader().setDefaultSectionSize(24)
+            monitor.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self._hide_monitor_columns(self.account_monitor, {"gateway_name"})
         self._hide_monitor_columns(self.position_monitor, {"gateway_name"})
         self._hide_monitor_columns(
@@ -553,24 +612,30 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         tabs.addTab(self.order_monitor, "委托")
         content_layout.addWidget(tabs, 4)
 
-        self.security_dock = QtWidgets.QDockWidget(f"证券库 {len(self.securities)}", self)
+        self.security_dock = QtWidgets.QDockWidget(f"行情列表  {len(self.securities)}", self)
         self.security_dock.setObjectName("securityDock")
         self.security_dock.setWidget(self.security_panel)
-        self.security_dock.setMinimumWidth(245)
+        self.security_dock.setMinimumWidth(250)
         self.security_dock.setAllowedAreas(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.security_dock)
 
     def _create_header(self) -> QtWidgets.QWidget:
         header = QtWidgets.QWidget()
         header.setObjectName("header")
-        header.setFixedHeight(64)
+        header.setFixedHeight(52)
         layout = QtWidgets.QHBoxLayout(header)
-        layout.setContentsMargins(18, 0, 18, 0)
-        brand = QtWidgets.QLabel("交易终端")
+        layout.setContentsMargins(14, 0, 14, 0)
+        mark = QtWidgets.QLabel("QF")
+        mark.setObjectName("brandMark")
+        brand = QtWidgets.QLabel("QuantFabric")
         brand.setObjectName("brand")
+        market_label = QtWidgets.QLabel("A 股交易终端")
+        market_label.setObjectName("marketLabel")
         self.session_state = QtWidgets.QLabel("交易会话连接中")
         self.session_state.setObjectName("statusOffline")
+        layout.addWidget(mark)
         layout.addWidget(brand)
+        layout.addWidget(market_label)
         layout.addStretch()
         layout.addWidget(self.session_state)
 
