@@ -4,7 +4,7 @@ XTraderConfig:
   BrokerID: 9999
   Account: 188795
   Password: test
-  BusinessType: 3
+  BusinessType: 1
   CloseToday: true
   AppID: test
   AuthCode: test
@@ -15,7 +15,7 @@ XTraderConfig:
   QryFund: true
   CancelAll: false
   CPUSET: -1, -1
-  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerList.yml
+  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerListStock.yml
   ErrorPath: /root/projects/quantfabric-study/QuantFabric/XTrader/Config/CTPError.yml
   RiskServerName: RiskServer
   OrderServerName: OrderServer

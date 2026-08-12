@@ -41,6 +41,10 @@ if [[ ! -f "${config_dir}/AuthAdmin.env" ]]; then
     printf 'authorization configuration is missing; run runtime/prepare.sh first\n' >&2
     exit 1
 fi
+if [[ ! -f "${config_dir}/BusinessAdmin.env" ]]; then
+    printf 'business control-plane configuration is missing; run runtime/prepare.sh first\n' >&2
+    exit 1
+fi
 if [[ ! -x "${repo_root}/.auth-venv/bin/python" ]]; then
     printf 'authorization Python environment is missing; install AuthAdminService/requirements.txt first\n' >&2
     exit 1
@@ -50,6 +54,7 @@ fi
 # starting XServer so its internal AuthAdmin request key is never in YAML.
 set -a
 source "${config_dir}/AuthAdmin.env"
+source "${config_dir}/BusinessAdmin.env"
 set +a
 
 start_component() {
@@ -76,10 +81,11 @@ start_component() {
 wait_for_log() {
     local name=$1
     local text=$2
+    local attempts=${3:-300}
     local log_file="${log_dir}/${name}.stdout.log"
     local pid_file="${pid_dir}/${name}.pid"
 
-    for _ in {1..300}; do
+    for ((attempt = 0; attempt < attempts; ++attempt)); do
         if grep -Fq -- "${text}" "${log_file}"; then
             printf 'ready   %-14s %s\n' "${name}" "${text}"
             return
@@ -119,6 +125,11 @@ start_component AuthAdmin \
     env "PYTHONPATH=${repo_root}" "${repo_root}/.auth-venv/bin/python" -m uvicorn \
     AuthAdminService.app:app --host 127.0.0.1 --port 18080
 wait_for_http AuthAdmin "http://127.0.0.1:18080/healthz"
+if [[ "${QF_BUSINESS_POLICY_ENABLED:-false}" == "true" ]]; then
+    "${runtime_dir}/start-business-admin.sh"
+    wait_for_http BusinessAdmin "http://127.0.0.1:19080/healthz"
+    components=(BusinessAdmin "${components[@]}")
+fi
 if [[ "${mode}" != "test" ]]; then
     atp_bridge_args=()
     if [[ "${mode}" == "real-trade" ]]; then
@@ -163,7 +174,9 @@ wait_for_log XTrader "SHMServer Init OrderServer${trader_account} done"
 start_component XMarketCenter \
     "${repo_root}/build/XMarketCenter_0.9.3" "${debug_args[@]}" \
     -f "${market_config}" -L "${market_plugin}"
-wait_for_log XMarketCenter "SHMServer Init MarketServer done"
+# 首次创建 256 个共享内存行情通道时需要清零约 4GB 内存；低负载机器上
+# 会超过通用服务的 30 秒等待时间，因此仅行情发布端使用更长的就绪窗口。
+wait_for_log XMarketCenter "SHMServer Init MarketServer done" 1200
 start_component XQuant \
     "${repo_root}/build/XQuant_0.1.0" "${debug_args[@]}" -f "${quant_config}"
 

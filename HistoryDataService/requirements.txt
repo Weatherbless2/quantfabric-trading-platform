@@ -1,0 +1,4 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+# Windows Python 3.14 requires a newer psycopg-binary wheel than 3.2.3.
+psycopg[binary]>=3.2.3,<3.4

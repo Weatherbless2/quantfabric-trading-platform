@@ -26,6 +26,13 @@ def scaled(value, precision):
     return float(value or 0) / (10 ** precision)
 
 
+def order_trace_id(account, order_token=0, order_ref=""):
+    token = str(order_token or "").strip()
+    if token and token != "0":
+        return f"QF-{account}-{token}"
+    return f"QF-{account}-REF-{order_ref or 'UNKNOWN'}"
+
+
 def market_details(config, exchange):
     aliases = {
         "SH": (101, "shanghai_account_id"),
@@ -183,8 +190,10 @@ class BridgeHandler(ATPTradeHandler):
             status = fallback_status
 
         market_id = int(data.get("market_id", context.get("market_id", 0)) or 0)
+        trace_id = context.get("trace_id") or order_trace_id("UNKNOWN", 0, order_ref)
         return {
             "type": "order_status",
+            "trace_id": trace_id,
             "status": status,
             "ticker": data.get("security_id", context.get("ticker", "")).strip(),
             "exchange": "SSE" if market_id == 101 else "SZSE",
@@ -250,6 +259,8 @@ class ATPBridge:
         market_id, account_id = market_details(self.config, command["exchange"])
         request = account_request(self.config, self.sequence)
         sequence_id = request["client_seq_id"]
+        account = self.config["account"]["fund_account_id"]
+        trace_id = order_trace_id(account, command.get("order_token", 0))
         request.update({
             "account_id": account_id,
             "security_id": command["ticker"],
@@ -262,6 +273,7 @@ class ATPBridge:
             "order_type": "a",
         })
         self.handler.remember_order(sequence_id, {
+            "trace_id": trace_id,
             "ticker": command["ticker"],
             "market_id": market_id,
             "side": request["side"],
@@ -272,10 +284,19 @@ class ATPBridge:
             "order_token": command.get("order_token", 0),
             "send_time": command.get("send_time", ""),
         })
+        print(json.dumps({
+            "event": "order_request",
+            "trace_id": trace_id,
+            "ticker": command["ticker"],
+            "exchange": command["exchange"],
+            "price": command["price"],
+            "volume": command["volume"],
+        }, ensure_ascii=False), flush=True)
         result = self.api.ReqCashAuctionOrder(request)
         if result.get("err_code") != SUCCESS_CODE:
             self.handler.publish({
                 "type": "order_status",
+                "trace_id": trace_id,
                 "status": "rejected",
                 "ticker": command["ticker"],
                 "exchange": command["exchange"],
@@ -307,6 +328,13 @@ class ATPBridge:
             "orig_cl_ord_no": int(command["order_ref"]),
             "market_id": market_id,
         })
+        account = self.config["account"]["fund_account_id"]
+        print(json.dumps({
+            "event": "cancel_request",
+            "trace_id": order_trace_id(account, 0, str(command["order_ref"])),
+            "order_ref": str(command["order_ref"]),
+            "exchange": command["exchange"],
+        }, ensure_ascii=False), flush=True)
         result = self.api.ReqCancelOrder(request)
         if result.get("err_code") != SUCCESS_CODE:
             self.handler.publish({

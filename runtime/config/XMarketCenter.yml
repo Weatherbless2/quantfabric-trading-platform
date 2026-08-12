@@ -1,11 +1,11 @@
 MarketCenterConfig:
   ServerIP: 127.0.0.1
   Port: 8001
-  ExchangeID: CFFEX
-  BusinessType: 3
+  ExchangeID: SZSE
+  BusinessType: 1
   ToMonitor: true
-  Future: true
-  TotalTick: 172800
+  Future: false
+  TotalTick: 14400
   MarketServer: MarketServer
   RecvTimeOut: 60000
   CPUSET: -1, -1, -1
@@ -15,5 +15,5 @@ MarketCenterConfig:
     - 06:00:00.000-12:00:00.000
     - 12:00:00.000-18:00:00.000
     - 18:00:00.000-23:59:59.999
-  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerList.yml
+  TickerListPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/TickerListStock.yml
   APIConfig: /root/projects/quantfabric-study/QuantFabric/runtime/config/XMarketCenter.yml

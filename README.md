@@ -2,29 +2,41 @@
 
 基于 QuantFabric 的 C++ Qt 量化交易平台学习与协作仓库。
 
-当前目标是构建一个本地部署的桌面交易平台：C++ Qt 交易端直接连接
-QuantFabric C++ 交易核心；Python 仅用于权限服务和外部行情适配，不作为桌面端和
-交易核心之间的中间层。
+当前目标是构建一个本地部署的桌面交易平台：vn.py Qt 工作台通过进程内
+`quantfabric_native` C++ 扩展直接连接 QuantFabric C++ 交易核心。该扩展不是
+独立桥接进程，Python 不会绕过 XServer、XRiskJudge 或 XTrader 直连柜台。
 
 > 当前仓库用于学习、开发和 ATP 模拟/测试柜台验证。未完成风控、账户授权和柜台
 > 配置审核前，禁止用于真实交易。
 
-## 当前进度
+## 当前进度（2026-08-12）
 
-- 已有：QuantFabric C++ 核心、XServer、XWatcher、XRiskJudge、XTrader、
-  XMarketCenter、AuthAdminService、Casbin 权限校验。
-- 已确定：C++ Qt 客户端直接通过 HPSocket + PackMessage 连接 XServer。
-- 规划中：`QtTrader`（交易端）与 `QtAdmin`（管理端）两个 C++ Qt 子项目。
-- 不在当前范围：Redis、Keycloak、复杂审批流、多租户，以及桌面端 Python/C++
-  中间层。
+当前处于“本地模拟交易闭环 + 第一版业务控制面”阶段，尚未进入真实柜台上线阶段。
+
+| 阶段 | 状态 | 已交付内容 |
+|---|---|---|
+| 1. C++ 核心交易面 | 已完成 | `XServer -> XWatcher -> XRiskJudge -> XTrader`，共享内存行情链路与 TestTrader 模拟成交。 |
+| 2. 认证与权限控制面 | 已完成 | `AuthAdminService`、短会话、Casbin、菜单与账户动作授权、审计。 |
+| 3. vn.py 交易桌面 | 已完成 | `VnpyMonitor`、实时行情、K 线、资金、持仓、委托、成交、下单和撤单入口。 |
+| 4. 业务后台管理 | 已完成第一版 | `BusinessAdminService` 的主数据、资产单元、账户关联、草稿、校验、发布、退役和审计。 |
+| 5. 控制面与交易面联调 | 已完成 | XServer 只加载 `PUBLISHED` 版本，支持原子热更新，并校验订阅、下单和撤单规则。 |
+| 6. 真实行情与真实柜台 | 未开始 | 仍缺公司行情 SDK/字段映射、柜台测试环境验收、断线恢复和生产风控验收。 |
+
+已确认：vn.py 通过进程内 `quantfabric_native` C++ 扩展使用 HPSocket + PackMessage
+连接 XServer；不存在桌面端 Python/C++ 桥接进程。Redis、Keycloak、复杂审批流、多租户，
+以及绕过交易核心的客户端柜台访问不在当前范围。
 
 ## 目标架构
 
 ```mermaid
 flowchart LR
     QtAdmin["QtAdmin<br/>C++ Qt 管理端"] -->|HTTP 管理 API| Auth["AuthAdminService<br/>登录、短会话、Casbin"]
-    QtTrader["QtTrader<br/>C++ Qt 交易端"] -->|HTTP 登录| Auth
-    QtTrader <-->|HPSocket + PackMessage| XServer["XServer<br/>会话与账户权限"]
+    Vnpy["VnpyMonitor<br/>vn.py Qt 交易工作台"] -->|HTTP 登录| Auth
+    Vnpy -->|已鉴权历史 K 线| History["HistoryDataService<br/>只读历史行情"]
+    History -->|只读查询| Postgres["PostgreSQL<br/>分钟 K 线"]
+    History -->|market:history 授权| Auth
+    Vnpy --> Native["quantfabric_native<br/>进程内 C++ 客户端"]
+    Native <-->|HPSocket + PackMessage| XServer["XServer<br/>会话与账户权限"]
     XServer -->|服务端权限校验| Auth
     PyTdx["pytdx 行情适配"] --> Market["XMarketCenter"]
     Market --> Watcher["XWatcher"]
@@ -46,29 +58,112 @@ flowchart LR
 git submodule update --init --recursive
 
 sudo apt-get update
-sudo apt-get install -y build-essential cmake curl sqlite3 python3-venv \
+sudo apt-get install -y build-essential cmake curl sqlite3 python3-dev python3-venv \
     qtbase5-dev qt5-qmake
 
 python3 -m venv .auth-venv
 .auth-venv/bin/python -m pip install -r AuthAdminService/requirements.txt
+python3 -m venv .vnpy-venv
+.vnpy-venv/bin/python -m pip install -r VnpyMonitor/requirements.txt
+.auth-venv/bin/python -m pip install -r HistoryDataService/requirements.txt
 
 ./runtime/setup-bridges.sh
 ./runtime/prepare.sh
 
-cmake -S . -B build
+cmake -S . -B build -DPython3_EXECUTABLE="$PWD/.vnpy-venv/bin/python"
 cmake --build build --target \
-    XServer_0.9.0 XWatcher_0.4.0 XRiskJudge_0.9.3 XTrader_0.9.3 \
-    XMarketCenter_0.9.3 XQuant_0.1.0 \
+    XServer_0.9.0 XWatcher_0.6.0 XRiskJudge_0.9.3 XTrader_0.9.3 \
+    XMarketCenter_0.9.3 XQuant_0.1.0 QtAdmin_0.1.0 quantfabric_native \
     -j"$(nproc)"
 ```
 
-## 本地测试运行
+## 运行与验收
 
-先启动安全的本地测试链路：
+### 1. 启动完整本地联调链路
+
+首次执行“首次构建”后，配置业务策略并启动全部服务：
 
 ```bash
+./runtime/prepare.sh
+
+cat >> runtime/config/BusinessAdmin.env <<'EOF'
+QF_BUSINESS_POLICY_ENABLED=true
+QF_BUSINESS_POLICY_URL=http://127.0.0.1:19080
+QF_BUSINESS_POLICY_TIMEOUT_MS=1000
+QF_BUSINESS_POLICY_REFRESH_SECONDS=5
+EOF
+
+./runtime/prepare.sh
 ./runtime/start.sh test
 ```
+
+`start.sh` 会按以下顺序启动：`AuthAdminService -> BusinessAdminService -> XServer ->
+XWatcher -> XRiskJudge -> XTrader -> XMarketCenter -> XQuant`。当业务策略开启时，脚本
+会在 XServer 前等待后台服务就绪，避免 XServer 因找不到已发布配置而进入 fail-closed。
+
+验证所有核心服务和已发布配置：
+
+```bash
+curl http://127.0.0.1:18080/healthz
+curl http://127.0.0.1:19080/healthz
+grep -a 'activated published business policy version' runtime/log/XServer_*.log | tail -1
+```
+
+预期结果是两个 HTTP 请求分别返回 `status: ok`，日志出现
+`XServer activated published business policy version:<n>`。
+
+### 2. 打开两个页面
+
+在新终端打开后台管理页面：
+
+```bash
+xdg-open http://127.0.0.1:19080/
+```
+
+在另一新终端打开 vn.py 交易客户端：
+
+```bash
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
+```
+
+开发登录账号为 `admin`，密码为 `123456`。后台页面用于维护并发布配置版本；交易客户端
+用于订阅行情、查看 K 线/资金/持仓/委托/成交，以及发起测试下单。`XMonitor` 是旧 Fabric
+监控界面，不是当前交易前端。
+
+### 3. 验证后台发布会影响交易
+
+1. 在后台页面新建草稿版本，修改证券 `300007` 的“允许买入”，执行校验并发布。
+2. 等待不超过 `QF_BUSINESS_POLICY_REFRESH_SECONDS` 秒。
+3. 在交易客户端对 `300007.SZSE` 发起 100 股限价买单：关闭“允许买入”时会被 XServer
+   拒绝；重新启用并发布后，同样的订单会通过 `XRiskJudge -> TestTrader` 返回模拟成交。
+
+这证明真实使用链路为：`后台发布 -> BusinessAdminService -> XServer 热加载 -> vn.py 下单
+-> 风控 -> TestTrader 回报`，而非前端本地模拟放行。
+
+### 4. 可选页面和历史行情
+
+后台服务启动后，也可使用 Qt 权限管理端：
+
+```bash
+# 权限管理端
+./build/QtAdmin_0.1.0
+```
+
+若已按 [HistoryDataService/README.md](HistoryDataService/README.md) 在 PostgreSQL
+所在 Windows 主机启动历史服务，在 WSL 中额外设置其地址后启动工作台：
+
+```bash
+export QF_HISTORY_URL="http://$(ip -4 route | awk '/default/{print $3; exit}'):18081"
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
+```
+
+未设置 `QF_HISTORY_URL` 时，工作台仅绘制本次运行以来的实时 K 线，不会尝试连接
+历史服务，也不会影响订阅、风控或交易。
+
+`test` 是本地 A 股模拟链路：从证券库选择股票后，模拟行情经 XMarketCenter 按需生成；
+手工委托经过 XServer、XRiskJudge 与 TestTrader 后返回模拟成交、资金和持仓。它不连接
+pytdx、ATP 或真实柜台。权限后台的实际操作方式见
+[VnpyMonitor/README.md](VnpyMonitor/README.md)。
 
 停止服务：
 
@@ -78,6 +173,39 @@ cmake --build build --target \
 
 `runtime/prepare.sh` 生成的数据库、日志、PID 和 `AuthAdmin.env` 都是本机运行状态，
 不能提交到 Git。
+
+## 业务控制面与已发布运行策略
+
+`BusinessAdminService/` 是独立的 Python 控制面，负责主数据、账户关联、版本校验、发布和
+审计；它不写入实时订单、成交、资金或持仓。PostgreSQL 迁移位于
+`BusinessAdminService/migrations/postgresql/`，先执行 001、002、003，再设置
+`QF_BUSINESS_DATABASE_URL` 启动服务。开发环境默认使用运行目录中的 SQLite。
+
+只有 `PUBLISHED` 版本会被 C++ `XServer` 读取。业务策略开关由本机
+`runtime/config/BusinessAdmin.env` 统一管理；开启后 `runtime/start.sh test` 会先启动
+`BusinessAdminService`，再启动 XServer。首次启用时按“运行与验收”章节写入开关并执行
+`./runtime/prepare.sh`。不要同时手工启动重复的 19080/19081 后台实例。
+
+```bash
+./runtime/start.sh test
+```
+
+启用前必须在后台发布与 `TestTrader` 匹配的 `Test` 产品、账户关联和证券规则。验证策略
+加载与回退：查看 `runtime/log/XServer_*.log` 中的版本激活/刷新告警，并运行：
+
+```bash
+.auth-venv/bin/python -m unittest BusinessAdminService.test_service
+cmake --build build --target XServerRuntimePolicyTest -j"$(nproc)"
+./build/XServerRuntimePolicyTest
+```
+
+控制面暂时不可用时，XServer 保留上一次完整加载的策略；首次加载失败则对订阅、下单和撤单
+采取 fail-closed。撤单通过 XServer 从订单回报建立的 `OrderRef` 索引取得证券上下文，继续
+执行已发布版本的 `cancel_allowed`，不改变现有 `PackMessage` 协议。
+
+最近一次完整验证覆盖：后台 API 和 Casbin、历史服务、vn.py 网关、C++ 运行时策略解析、
+完整启动、策略禁买拒单以及恢复策略后的 TestTrader 模拟成交。XServer 同时已加入空闲队列
+退避，避免没有业务消息时占满一个 CPU 核；兼容登录表的密码和失败登录密码不会再写入日志。
 
 更完整的运行说明见 [runtime/README.md](runtime/README.md)。
 
@@ -99,5 +227,9 @@ cmake --build build --target \
 | `XRiskJudge/` | C++ 交易风控 |
 | `XTrader/` | C++ 柜台交易接入 |
 | `XMarketCenter/` | C++ 行情接入与分发 |
+| `VnpyMonitor/` | vn.py Qt 交易工作台和网关事件映射 |
+| `HistoryDataService/` | 历史 K 线只读 API、Casbin 校验和 PostgreSQL 映射 |
+| `VnpyNative/` | 连接 XServer 的进程内 C++ Python 扩展 |
+| `QtAdmin/` | C++ Qt 权限管理端 |
 | `runtime/` | 本地准备、启动、停止脚本与示例配置 |
 | `doc/architecture/` | 当前和目标架构文档 |

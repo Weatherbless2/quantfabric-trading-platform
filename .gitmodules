@@ -3,7 +3,7 @@
 	url = https://github.com/QuantFabric/XWatcher.git
 [submodule "XTrader"]
 	path = XTrader
-	url = https://github.com/QuantFabric/XTrader.git
+	url = git@github.com:Weatherbless2/XTrader.git
 [submodule "XServer"]
 	path = XServer
 	url = https://github.com/QuantFabric/XServer.git
@@ -15,7 +15,7 @@
 	url = https://github.com/QuantFabric/XMonitor.git
 [submodule "XMarketCenter"]
 	path = XMarketCenter
-	url = https://github.com/QuantFabric/XMarketCenter.git
+	url = git@github.com:Weatherbless2/XMarketCenter.git
 [submodule "XAPI"]
 	path = XAPI
 	url = https://github.com/QuantFabric/XAPI.git

@@ -13,3 +13,8 @@ XServerConfig:
     ServiceURL: http://127.0.0.1:18080
     TimeoutMs: 1000
     Domain: desk:cn_equity
+  BusinessPolicy:
+    Enabled: false
+    ServiceURL: http://127.0.0.1:19080
+    TimeoutMs: 1000
+    RefreshSeconds: 60

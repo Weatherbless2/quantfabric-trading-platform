@@ -1,6 +1,7 @@
 XMonitorConfig:
   XServerIP: 127.0.0.1
   XServerPort: 8000
+  AuthorizationServiceURL: http://127.0.0.1:18080
   UserName: admin
   PassWord: 123456
   StrategyPropertyPath: /root/projects/quantfabric-study/QuantFabric/runtime/config/Strategy.yml
