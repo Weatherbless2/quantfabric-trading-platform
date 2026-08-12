@@ -442,9 +442,11 @@ function currentPayload() {
 async function loadVersions() {
   const items = await api("config/versions");
   const published = items.find(item => item.status === "PUBLISHED");
+  const latestDraft = items.find(item => item.status === "DRAFT");
   state.publishedVersion = published ? published.version : null;
-  if (state.version == null) {
-    state.version = published ? published.version : (items[0]?.version ?? null);
+  if (state.version == null || !items.some(item => item.version === state.version) ||
+      (state.versionStatus === "PUBLISHED" && latestDraft)) {
+    state.version = latestDraft?.version ?? published?.version ?? (items[0]?.version ?? null);
   }
   state.versionStatuses = Object.fromEntries(items.map(item => [item.version, item.status]));
   state.versionStatus = state.versionStatuses[state.version] || "";
@@ -462,6 +464,14 @@ async function loadVersions() {
   if (selector) {
     selector.innerHTML = items.map(item => `<option value="${item.version}" ${item.version === state.version ? "selected" : ""}>版本 ${item.version} · ${formatValue("status", item.status)}</option>`).join("");
   }
+  updateVersionActions();
+}
+
+function updateVersionActions() {
+  const validate = document.getElementById("validateVersion");
+  const publish = document.getElementById("publishVersion");
+  if (validate) validate.disabled = !["DRAFT", "VALIDATED"].includes(state.versionStatus);
+  if (publish) publish.disabled = state.versionStatus !== "VALIDATED";
 }
 
 async function selectModule(module) {
@@ -529,8 +539,12 @@ function renderVersionToolbar() {
     if (description == null) return;
     const selected = state.currentRows.find(item => item.version === state.version);
     const sourceVersion = selected && ["PUBLISHED", "RETIRED"].includes(selected.status) ? state.version : null;
-    await api("config/versions", {method: "POST", body: JSON.stringify({description, source_version: sourceVersion})});
-    log("已创建新的草稿版本");
+    const created = await api("config/versions", {method: "POST", body: JSON.stringify({description, source_version: sourceVersion})});
+    // The API allocates the authoritative version number. Switch to it before
+    // rendering again so validation and publishing cannot target the old version.
+    state.version = created.version;
+    state.versionStatus = created.status;
+    log(`已创建草稿版本 ${created.version}`);
     await loadVersions();
   };
   document.getElementById("validateVersion").onclick = async () => {
@@ -540,8 +554,10 @@ function renderVersionToolbar() {
     await loadVersions();
   };
   document.getElementById("publishVersion").onclick = async () => {
-    await api(`config/versions/${state.version}/publish`, {method: "POST"});
-    log(`已发布版本 ${state.version}`);
+    const published = await api(`config/versions/${state.version}/publish`, {method: "POST"});
+    state.version = published.version;
+    state.versionStatus = published.status;
+    log(`已发布版本 ${published.version}`);
     await loadVersions();
   };
   document.getElementById("versionSelector").onchange = event => {
