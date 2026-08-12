@@ -25,6 +25,9 @@
 flowchart LR
     QtAdmin["QtAdmin<br/>C++ Qt 管理端"] -->|HTTP 管理 API| Auth["AuthAdminService<br/>登录、短会话、Casbin"]
     Vnpy["VnpyMonitor<br/>vn.py Qt 交易工作台"] -->|HTTP 登录| Auth
+    Vnpy -->|已鉴权历史 K 线| History["HistoryDataService<br/>只读历史行情"]
+    History -->|只读查询| Postgres["PostgreSQL<br/>分钟 K 线"]
+    History -->|market:history 授权| Auth
     Vnpy --> Native["quantfabric_native<br/>进程内 C++ 客户端"]
     Native <-->|HPSocket + PackMessage| XServer["XServer<br/>会话与账户权限"]
     XServer -->|服务端权限校验| Auth
@@ -55,6 +58,7 @@ python3 -m venv .auth-venv
 .auth-venv/bin/python -m pip install -r AuthAdminService/requirements.txt
 python3 -m venv .vnpy-venv
 .vnpy-venv/bin/python -m pip install -r VnpyMonitor/requirements.txt
+.auth-venv/bin/python -m pip install -r HistoryDataService/requirements.txt
 
 ./runtime/setup-bridges.sh
 ./runtime/prepare.sh
@@ -83,6 +87,17 @@ cmake --build build --target \
 # 当前交易前端：vn.py Qt 工作台
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
+
+若已按 [HistoryDataService/README.md](HistoryDataService/README.md) 在 PostgreSQL
+所在 Windows 主机启动历史服务，在 WSL 中额外设置其地址后启动工作台：
+
+```bash
+export QF_HISTORY_URL="http://$(ip -4 route | awk '/default/{print $3; exit}'):18081"
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
+```
+
+未设置 `QF_HISTORY_URL` 时，工作台仅绘制本次运行以来的实时 K 线，不会尝试连接
+历史服务，也不会影响订阅、风控或交易。
 
 开发登录使用 `admin` / `123456`，权限服务地址为
 `http://127.0.0.1:18080`。`XMonitor/build/QtTrader_0.1.0` 是历史 Fabric
@@ -123,6 +138,7 @@ pytdx、ATP 或真实柜台。权限后台的实际操作方式见
 | `XTrader/` | C++ 柜台交易接入 |
 | `XMarketCenter/` | C++ 行情接入与分发 |
 | `VnpyMonitor/` | vn.py Qt 交易工作台和网关事件映射 |
+| `HistoryDataService/` | 历史 K 线只读 API、Casbin 校验和 PostgreSQL 映射 |
 | `VnpyNative/` | 连接 XServer 的进程内 C++ Python 扩展 |
 | `QtAdmin/` | C++ Qt 权限管理端 |
 | `runtime/` | 本地准备、启动、停止脚本与示例配置 |

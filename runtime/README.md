@@ -34,6 +34,7 @@ python3 -m venv .auth-venv
 .auth-venv/bin/python -m pip install -r AuthAdminService/requirements.txt
 python3 -m venv .vnpy-venv
 .vnpy-venv/bin/python -m pip install -r VnpyMonitor/requirements.txt
+.auth-venv/bin/python -m pip install -r HistoryDataService/requirements.txt
 
 ./runtime/setup-bridges.sh
 ./runtime/prepare.sh
@@ -76,6 +77,13 @@ ready:
 
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
+
+Historical PostgreSQL minute bars are intentionally not started by
+`runtime/start.sh`: the current database listens only on Windows loopback.
+Start `HistoryDataService` beside that database and export `QF_HISTORY_URL` in
+WSL before launching `VnpyMonitor`. See
+[HistoryDataService/README.md](../HistoryDataService/README.md). Without this
+variable the workbench remains fully usable with real-time bars only.
 
 Build the `quantfabric_native` extension with the same `.vnpy-venv` Python
 interpreter before starting `VnpyMonitor`.

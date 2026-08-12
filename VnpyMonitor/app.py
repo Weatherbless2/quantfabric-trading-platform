@@ -31,6 +31,8 @@ def main() -> int:
                         help="本次会话申请使用的资金账户")
     parser.add_argument("--auth-url", default=os.getenv("QF_VNPY_AUTH_URL", "http://127.0.0.1:18080"),
                         help="AuthAdminService 地址")
+    parser.add_argument("--history-url", default=os.getenv("QF_HISTORY_URL", ""),
+                        help="历史行情服务地址；未设置时只使用实时 K 线")
     args = parser.parse_args()
 
     qapp = create_qapp("QuantFabric vn.py")
@@ -51,6 +53,7 @@ def main() -> int:
         "密码": args.password,
         "资金账号": args.account,
         "认证服务地址": args.auth_url,
+        "历史行情地址": args.history_url,
     })
     main_engine.connect(connection_setting, GATEWAY_NAME)
     window.subscribe_selected()

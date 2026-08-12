@@ -43,6 +43,22 @@ cmake --build build --target quantfabric_native -j"$(nproc)"
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
 
+## 历史 K 线
+
+工作台的 `1 分钟`、`5 分钟`、`15 分钟` 周期按钮会优先从
+`HistoryDataService` 加载 PostgreSQL 中的分钟 K 线，再用本次桌面会话的实时行情
+覆盖当前周期。历史查询和实时订阅分别需要 Casbin 的 `market:history` 与
+`market:subscribe` 权限；两者都由服务端校验，前端不直连数据库。
+
+```text
+vn.py Qt -> HistoryDataService -> PostgreSQL 分钟 K 线
+vn.py Qt -> quantfabric_native -> XServer -> C++ 实时行情、风控、交易
+```
+
+历史服务的 Windows/WSL 启动和网络配置见
+[`HistoryDataService/README.md`](../HistoryDataService/README.md)。在服务未部署时，
+界面仍可使用实时行情和交易；K 线仅从前端启动后开始累积。
+
 本地开发使用 `admin` / `123456` 向 AuthAdminService 换取短会话。桌面密码不会写入
 XServer 的 PackMessage 登录包。默认账户 `188795` 与 `TestTrader` 测试链路对应。
 

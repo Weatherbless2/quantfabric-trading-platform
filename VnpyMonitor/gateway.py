@@ -156,11 +156,14 @@ class QuantFabricGateway(BaseGateway):
         self._next_session_refresh_at = 0.0
         self._next_auth_retry_at = 0.0
         self._connection_setting: dict | None = None
+        self.auth_session_id = ""
+        self.history_url = ""
 
     def connect(self, setting: dict) -> None:
         if self.native_client:
             return
         self.account_id = str(setting.get("资金账号", self.account_id))
+        self.history_url = str(setting.get("历史行情地址", "")).rstrip("/")
         self._connection_setting = dict(setting)
         self.event_engine.register(EVENT_TIMER, self._on_timer)
         self._open_authenticated_connection()
@@ -182,6 +185,8 @@ class QuantFabricGateway(BaseGateway):
             self._next_auth_retry_at = time.monotonic() + 15.0
             self.write_log(f"认证会话创建失败：{exc}")
             return
+
+        self.auth_session_id = session_id
 
         previous_client = self.native_client
         if previous_client:
@@ -212,6 +217,7 @@ class QuantFabricGateway(BaseGateway):
         if self.native_client:
             self.native_client.stop()
         self.native_client = None
+        self.auth_session_id = ""
         self._connection_setting = None
         self.orders_enabled = False
         self._publish_connection_state()

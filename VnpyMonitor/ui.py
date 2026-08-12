@@ -14,6 +14,7 @@ from vnpy.trader.ui import QtCore, QtGui, QtWidgets
 from vnpy.trader.ui.widget import AccountMonitor, OrderMonitor, PositionMonitor
 
 from .gateway import EVENT_QF_CONNECTION, GATEWAY_NAME, QuantFabricGateway, load_security_master
+from .history import HistoryBar, start_history_load
 
 def normalize_search_text(value: str) -> str:
     """统一全角/半角字符并忽略证券简称中的空白。"""
@@ -379,6 +380,24 @@ class RealtimeChartWidget(ChartWidget):
         self._update_y_range()
 
 
+def _bar_from_history(vt_symbol: str, history_bar: HistoryBar) -> BarData:
+    """Convert the HTTP history contract to vn.py's chart-native object."""
+    symbol, exchange_value = vt_symbol.rsplit(".", 1)
+    return BarData(
+        gateway_name=GATEWAY_NAME,
+        symbol=symbol,
+        exchange=Exchange(exchange_value),
+        datetime=history_bar.datetime,
+        interval=Interval.MINUTE,
+        open_price=history_bar.open_price,
+        high_price=history_bar.high_price,
+        low_price=history_bar.low_price,
+        close_price=history_bar.close_price,
+        volume=history_bar.volume,
+        turnover=history_bar.turnover,
+    )
+
+
 class ConfirmingOrderMonitor(OrderMonitor):
     """复用 vn.py 委托表，并在撤单前增加明确确认。"""
 
@@ -522,13 +541,21 @@ class TradingPanel(QtWidgets.QWidget):
 class WorkbenchWindow(QtWidgets.QMainWindow):
     signal_tick = QtCore.Signal(Event)
     signal_connection = QtCore.Signal(Event)
+    signal_history_loaded = QtCore.Signal(str, int, list)
+    signal_history_failed = QtCore.Signal(str, str)
 
     def __init__(self, main_engine, event_engine) -> None:
         super().__init__()
         self.main_engine = main_engine
         self.event_engine = event_engine
         self.ticks = {}
+        # Live minute bars remain separate from database history.  The chart
+        # merges them only after aggregating both sources to the same period.
         self.bars: dict[str, OrderedDict] = {}
+        self.history_bars: dict[tuple[str, int], list[BarData]] = {}
+        self.history_threads: dict[str, QtCore.QThread] = {}
+        self.history_workers: dict[str, object] = {}
+        self.history_interval = 1
         self.volume_anchors: dict[str, float] = {}
         self.securities = load_security_master()
         self.security_names = {
@@ -564,10 +591,19 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         left_layout.setSpacing(5)
         self.quote_overview = QuoteOverview()
         left_layout.addWidget(self.quote_overview)
-        self.chart_title = QtWidgets.QLabel("分时 K 线")
-        chart_title = self.chart_title
-        chart_title.setObjectName("panelTitle")
-        left_layout.addWidget(chart_title)
+        chart_header = QtWidgets.QHBoxLayout()
+        self.chart_title = QtWidgets.QLabel("1 分钟 K 线")
+        self.chart_title.setObjectName("panelTitle")
+        chart_header.addWidget(self.chart_title)
+        chart_header.addStretch()
+        chart_header.addWidget(QtWidgets.QLabel("周期"))
+        self.interval_combo = QtWidgets.QComboBox()
+        self.interval_combo.addItem("1 分钟", 1)
+        self.interval_combo.addItem("5 分钟", 5)
+        self.interval_combo.addItem("15 分钟", 15)
+        self.interval_combo.currentIndexChanged.connect(self._interval_changed)
+        chart_header.addWidget(self.interval_combo)
+        left_layout.addLayout(chart_header)
         self.chart = RealtimeChartWidget()
         self.chart.setObjectName("panel")
         left_layout.addWidget(self.chart, 1)
@@ -644,6 +680,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
     def _register_events(self) -> None:
         self.signal_tick.connect(self._update_tick_metrics)
         self.signal_connection.connect(self._update_connection)
+        self.signal_history_loaded.connect(self._history_loaded)
+        self.signal_history_failed.connect(self._history_failed)
         self.event_engine.register(EVENT_TICK, self.signal_tick.emit)
         self.event_engine.register(EVENT_QF_CONNECTION, self.signal_connection.emit)
 
@@ -665,9 +703,56 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.trading_panel.set_symbol(vt_symbol, tick)
         name = self.security_names.get(vt_symbol, vt_symbol.rsplit(".", 1)[0])
         self.quote_overview.set_symbol(vt_symbol, name, tick)
-        self.chart_title.setText(f"{name} 1 分钟 K 线")
+        self.chart_title.setText(f"{name} {self.history_interval} 分钟 K 线")
         self.subscribe_selected()
+        self._load_history(vt_symbol)
         self._render_chart(vt_symbol)
+
+    def _interval_changed(self, index: int) -> None:
+        self.history_interval = int(self.interval_combo.itemData(index))
+        name = self.security_names.get(self.selected_vt_symbol, self.selected_vt_symbol)
+        self.chart_title.setText(f"{name} {self.history_interval} 分钟 K 线")
+        self._load_history(self.selected_vt_symbol)
+
+    def _history_service_setting(self) -> tuple[str, str]:
+        gateway = self.main_engine.get_gateway(GATEWAY_NAME)
+        if not isinstance(gateway, QuantFabricGateway):
+            return "", ""
+        return gateway.history_url, gateway.auth_session_id
+
+    def _load_history(self, vt_symbol: str) -> None:
+        service_url, session_id = self._history_service_setting()
+        if not service_url or not session_id or "." not in vt_symbol:
+            return
+        old_thread = self.history_threads.pop(vt_symbol, None)
+        if old_thread and old_thread.isRunning():
+            old_thread.quit()
+        thread, worker = start_history_load(
+            service_url, session_id, vt_symbol, self.history_interval, 240,
+            self.signal_history_loaded.emit,
+            self.signal_history_failed.emit,
+        )
+        thread.finished.connect(lambda: self._forget_history_thread(vt_symbol, thread))
+        self.history_threads[vt_symbol] = thread
+        self.history_workers[vt_symbol] = worker
+        thread.start()
+
+    def _history_loaded(self, vt_symbol: str, interval: int,
+                        history: list[HistoryBar]) -> None:
+        bars = [_bar_from_history(vt_symbol, item) for item in history]
+        self.history_bars[(vt_symbol, interval)] = bars
+        if vt_symbol == self.selected_vt_symbol and interval == self.history_interval:
+            self._render_chart(vt_symbol)
+
+    def _history_failed(self, vt_symbol: str, detail: str) -> None:
+        # History is optional: live quotes and trading remain available.
+        self.main_engine.write_log(f"历史行情加载失败 {vt_symbol}：{detail}")
+
+    def _forget_history_thread(self, vt_symbol: str, thread: QtCore.QThread) -> None:
+        """Do not remove a newer request when an older HTTP request finishes."""
+        if self.history_threads.get(vt_symbol) is thread:
+            self.history_threads.pop(vt_symbol, None)
+            self.history_workers.pop(vt_symbol, None)
 
     def subscribe_selected(self) -> None:
         if not self.selected_vt_symbol or "." not in self.selected_vt_symbol:
@@ -715,7 +800,7 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             self._render_chart(tick.vt_symbol)
 
     def _render_chart(self, vt_symbol: str) -> None:
-        bars = self.bars.get(vt_symbol)
+        bars = self._merge_chart_bars(vt_symbol)
         if not bars:
             self.chart.clear_all()
             self.chart.update_close_curve([])
@@ -728,6 +813,48 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.chart.update_history(history)
         self.chart.update_close_curve(history)
 
+    def _merge_chart_bars(self, vt_symbol: str) -> OrderedDict:
+        """Overlay live data onto history after both use the selected period."""
+        merged = OrderedDict(
+            (bar.datetime, bar)
+            for bar in self.history_bars.get((vt_symbol, self.history_interval), [])
+        )
+        for bar in self._aggregate_live_bars(vt_symbol).values():
+            merged[bar.datetime] = bar
+        return OrderedDict(sorted(merged.items()))
+
+    def _aggregate_live_bars(self, vt_symbol: str) -> OrderedDict:
+        source = self.bars.get(vt_symbol, OrderedDict())
+        if self.history_interval == 1:
+            return source
+        result: OrderedDict = OrderedDict()
+        for source_bar in source.values():
+            minute = (source_bar.datetime.minute // self.history_interval) * self.history_interval
+            bucket = source_bar.datetime.replace(minute=minute, second=0, microsecond=0)
+            bar = result.get(bucket)
+            if bar is None:
+                bar = BarData(
+                    gateway_name=GATEWAY_NAME,
+                    symbol=source_bar.symbol,
+                    exchange=source_bar.exchange,
+                    datetime=bucket,
+                    interval=Interval.MINUTE,
+                    open_price=source_bar.open_price,
+                    high_price=source_bar.high_price,
+                    low_price=source_bar.low_price,
+                    close_price=source_bar.close_price,
+                    volume=source_bar.volume,
+                    turnover=source_bar.turnover,
+                )
+                result[bucket] = bar
+                continue
+            bar.high_price = max(bar.high_price, source_bar.high_price)
+            bar.low_price = min(bar.low_price, source_bar.low_price)
+            bar.close_price = source_bar.close_price
+            bar.volume += source_bar.volume
+            bar.turnover += source_bar.turnover
+        return result
+
     def _update_connection(self, event: Event) -> None:
         data = event.data
         if data["name"] == "C++原生会话":
@@ -737,6 +864,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             self.session_state.setObjectName("statusOnline" if enabled else "statusOffline")
             self.session_state.style().unpolish(self.session_state)
             self.session_state.style().polish(self.session_state)
+            if enabled:
+                self._load_history(self.selected_vt_symbol)
             return
 
     def _default_symbol(self) -> str:
@@ -753,5 +882,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
                 monitor.setColumnHidden(index, True)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        for thread in self.history_threads.values():
+            if thread.isRunning():
+                thread.quit()
         self.main_engine.close()
         event.accept()
