@@ -114,11 +114,13 @@ grep -a 'activated published business policy version' runtime/log/XServer_*.log 
 
 ### 2. 打开两个页面
 
-在新终端打开后台管理页面：
+在 Windows 浏览器地址栏访问后台管理页面：
 
-```bash
-xdg-open http://127.0.0.1:19080/
+```text
+http://127.0.0.1:19080/
 ```
+
+WSL 环境不需要、也通常没有安装 `xdg-open`；该命令缺失不影响后台服务运行。
 
 在另一新终端打开 vn.py 交易客户端：
 
