@@ -167,6 +167,9 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 未来公司行情接口接入时，实时行情替换 `XMarketCenter` 插件，历史数据实现相同 OHLCV
 接口即可，vn.py、XServer、风控和柜台链路不需要改动。
 
+后台管理页面的“行情库状态”不直接连接 ClickHouse，而是通过 `HistoryDataService` 的内部
+汇总接口读取行数和时间范围，因此 ClickHouse 凭据只留在历史服务的本机配置中。
+
 `test` 是本地 A 股模拟链路：从证券库选择股票后，模拟行情经 XMarketCenter 按需生成；
 手工委托经过 XServer、XRiskJudge 与 TestTrader 后返回模拟成交、资金和持仓。它不连接
 pytdx、ATP 或真实柜台。权限后台的实际操作方式见

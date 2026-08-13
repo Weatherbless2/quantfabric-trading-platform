@@ -596,10 +596,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/market-data/summary", response_model=MarketDataSummary)
     def market_data_summary(session_id: str = Header(alias="X-QF-Session-ID")) -> MarketDataSummary:
         require(session_id, "business:read", "business/market-data")
+        # The history service owns the data-source adapter and its credentials.
+        # The control plane consumes only its internal aggregate status API.
+        request = Request(
+            f"{settings.history_service_url}/v1/internal/summary",
+            headers={"X-QF-Internal-Key": settings.auth_internal_key},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=3) as response:
+                summary = json.loads(response.read().decode("utf-8"))
+            return MarketDataSummary(
+                configured=True,
+                table=str(summary["source"]),
+                rows=int(summary["rows"]),
+                first_time=summary.get("first_time"),
+                last_time=summary.get("last_time"),
+                detail=f"{summary.get('backend', 'history')} 只读历史数据源",
+            )
+        except (HTTPError, URLError, OSError, KeyError, TypeError, ValueError):
+            pass
         table = f"{settings.market_data_schema}.{settings.market_data_table}"
         if not settings.market_data_url:
             return MarketDataSummary(configured=False, table=table,
-                                     detail="未配置行情数据库连接，仅可使用历史行情服务。")
+                                     detail="历史行情服务当前不可用，未配置兼容数据库回退。")
         try:
             import psycopg
             query = f"SELECT count(*), min(trdtime), max(trdtime) FROM {table}"

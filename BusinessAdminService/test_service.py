@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,6 +40,7 @@ class BusinessControlPlaneTest(unittest.TestCase):
             market_data_url="",
             market_data_schema="tdx_init_test",
             market_data_table="stkprice_1min",
+            history_service_url="http://127.0.0.1:18081",
         )
         self.client = TestClient(create_app(settings))
 
@@ -46,6 +48,9 @@ class BusinessControlPlaneTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def auth_urlopen(self, request, timeout=5):
+        if "18080" not in request.full_url:
+            from urllib.error import URLError
+            raise URLError("test history service unavailable")
         path = request.full_url.split("18080", 1)[1]
         body = request.data.decode("utf-8") if request.data else "{}"
         headers = dict(request.header_items())
@@ -193,6 +198,41 @@ class BusinessControlPlaneTest(unittest.TestCase):
             response = self.client.get("/v1/market-data/summary", headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["configured"])
+
+    def test_market_data_summary_reads_aggregate_from_history_service(self) -> None:
+        session = self.login()
+        headers = {"X-QF-Session-ID": session["session_id"]}
+
+        def urlopen_for_summary(request, timeout=5):
+            if "18080" in request.full_url:
+                return self.auth_urlopen(request, timeout)
+            self.assertEqual(request.full_url, "http://127.0.0.1:18081/v1/internal/summary")
+            self.assertEqual(dict(request.header_items())["X-qf-internal-key"], "test-internal-key")
+
+            class ResponseAdapter:
+                def __enter__(self_nonlocal):
+                    return self_nonlocal
+
+                def __exit__(self_nonlocal, exc_type, exc, tb):
+                    return None
+
+                def read(self_nonlocal):
+                    return json.dumps({
+                        "backend": "clickhouse",
+                        "source": "tdxdata.stkprice_1min",
+                        "rows": 174658977,
+                        "first_time": "2021-08-16 09:31:00",
+                        "last_time": "2026-08-11 15:00:00",
+                    }).encode("utf-8")
+
+            return ResponseAdapter()
+
+        with patch("BusinessAdminService.service.urlopen", side_effect=urlopen_for_summary):
+            response = self.client.get("/v1/market-data/summary", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["configured"])
+        self.assertEqual(response.json()["table"], "tdxdata.stkprice_1min")
+        self.assertEqual(response.json()["rows"], 174658977)
 
     def test_internal_published_config_requires_service_key(self) -> None:
         self.assertEqual(self.client.get("/v1/internal/config/published").status_code, 401)

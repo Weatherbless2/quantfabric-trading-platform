@@ -101,6 +101,11 @@ ClickHouse account, then run `./runtime/start-history-data.sh` and export
 [HistoryDataService/README.md](../HistoryDataService/README.md). Without this
 variable the workbench remains fully usable with real-time bars only.
 
+When `HistoryDataService` is ready, the BusinessAdmin “行情库状态” page also
+shows its read-only coverage summary. `BusinessAdminService` calls the local
+history service with the existing internal service key and never receives the
+ClickHouse username or password.
+
 Build the `quantfabric_native` extension with the same `.vnpy-venv` Python
 interpreter before starting `VnpyMonitor`.
 

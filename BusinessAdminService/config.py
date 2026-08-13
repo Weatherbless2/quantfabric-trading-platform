@@ -19,6 +19,7 @@ class Settings:
     market_data_url: str
     market_data_schema: str
     market_data_table: str
+    history_service_url: str
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -31,6 +32,7 @@ class Settings:
             market_data_url=os.getenv("QF_MARKET_DATA_DATABASE_URL", ""),
             market_data_schema=os.getenv("QF_MARKET_DATA_SCHEMA", "tdx_init_test"),
             market_data_table=os.getenv("QF_MARKET_DATA_TABLE", "stkprice_1min"),
+            history_service_url=os.getenv("QF_HISTORY_SERVICE_URL", "http://127.0.0.1:18081").rstrip("/"),
         )
         settings.validate()
         return settings
@@ -40,6 +42,8 @@ class Settings:
             raise RuntimeError("QF_BUSINESS_DATABASE_URL must be configured")
         if not self.auth_url:
             raise RuntimeError("QF_BUSINESS_AUTH_URL must be configured")
+        if not self.history_service_url.startswith(("http://", "https://")):
+            raise RuntimeError("QF_HISTORY_SERVICE_URL must be an http(s) URL")
         if not self.auth_internal_key:
             raise RuntimeError("QF_AUTH_INTERNAL_KEY must be configured")
         for value, label in ((self.market_data_schema, "QF_MARKET_DATA_SCHEMA"),

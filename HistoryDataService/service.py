@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import json
+import secrets
 import string
 import time
 from base64 import b64encode
@@ -264,6 +265,40 @@ def _source_ready(source: HistorySource) -> None:
         connection.execute("SELECT 1").fetchone()
 
 
+def _source_summary(source: HistorySource) -> dict[str, Any]:
+    """Return read-only history coverage for the control-plane status page."""
+    source_name = (f"{source.clickhouse_database}.{source.table}"
+                   if source.backend == "clickhouse" else f"{source.schema}.{source.table}")
+    if source.backend == "clickhouse":
+        body = _clickhouse_query(
+            source,
+            f"SELECT count() AS rows, min(trdtime) AS first_time, max(trdtime) AS last_time "
+            f"FROM {source_name} FORMAT JSONEachRow",
+            {},
+        )
+        try:
+            row = json.loads(body)
+            return {
+                "backend": source.backend,
+                "source": source_name,
+                "rows": int(row["rows"]),
+                "first_time": row["first_time"],
+                "last_time": row["last_time"],
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("ClickHouse returned invalid history summary") from exc
+    with _connection() as connection:
+        rows, first_time, last_time = connection.execute(
+            f"SELECT count(*), min(trdtime), max(trdtime) FROM {source_name}").fetchone()
+    return {
+        "backend": source.backend,
+        "source": source_name,
+        "rows": int(rows),
+        "first_time": first_time.isoformat() if first_time else None,
+        "last_time": last_time.isoformat() if last_time else None,
+    }
+
+
 def _auth_session(session_id: str, symbol: str, exchange: str) -> None:
     """Ask AuthAdminService to authorize historical data access."""
     if len(session_id) != 30 or not AUTH_INTERNAL_KEY:
@@ -355,6 +390,22 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=503, detail="history data source unavailable") from exc
         return {"status": "ready", "backend": source.backend}
+
+    @app.get("/v1/internal/summary")
+    def summary(x_qf_internal_key: str | None = Header(default=None)) -> dict[str, Any]:
+        """Expose coverage only to internal control-plane callers.
+
+        This leaves the ClickHouse read-only credentials inside this process;
+        BusinessAdminService receives only aggregate coverage metadata.
+        """
+        if not AUTH_INTERNAL_KEY or not x_qf_internal_key or not secrets.compare_digest(
+                x_qf_internal_key, AUTH_INTERNAL_KEY):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="invalid internal service key")
+        try:
+            return _source_summary(source)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="history data source unavailable") from exc
 
     @app.get("/v1/history/minute")
     def minute_bars(

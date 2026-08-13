@@ -13,6 +13,7 @@ from HistoryDataService.service import (
     HistorySource,
     _clickhouse_rows,
     _clickhouse_query,
+    _source_summary,
     _number,
     create_app,
 )
@@ -129,6 +130,27 @@ class HistoryContractTest(unittest.TestCase):
             rows = _clickhouse_rows(source, "S", "SZSE:000014", 6)
         self.assertEqual(rows[0]["trdtime"], datetime(2026, 8, 12, 9, 34))
         self.assertEqual(_number(rows[0]["close"]), 11.8)
+
+    def test_clickhouse_summary_is_parsed_without_exposing_credentials(self) -> None:
+        source = HistorySource.from_environment()
+        source = HistorySource(
+            **{**source.__dict__, "clickhouse_username": "readonly", "clickhouse_password": "secret"})
+        with patch("HistoryDataService.service._clickhouse_query", return_value=(
+                '{"rows":"42","first_time":"2026-08-01 09:31:00",'
+                '"last_time":"2026-08-01 15:00:00"}\n')):
+            summary = _source_summary(source)
+        self.assertEqual(summary["source"], "tdxdata.stkprice_1min")
+        self.assertEqual(summary["rows"], 42)
+
+    def test_internal_summary_requires_the_service_key(self) -> None:
+        with patch("HistoryDataService.service.AUTH_INTERNAL_KEY", "internal-key"), \
+                patch("HistoryDataService.service._source_summary", return_value={"rows": 1}):
+            client = TestClient(create_app())
+            self.assertEqual(client.get("/v1/internal/summary").status_code, 401)
+            response = client.get("/v1/internal/summary", headers={
+                "X-QF-Internal-Key": "internal-key"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rows"], 1)
 
     def test_database_outage_returns_only_a_short_lived_authorized_cache(self) -> None:
         app = create_app()
