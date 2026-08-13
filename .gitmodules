@@ -6,7 +6,7 @@
 	url = git@github.com:Weatherbless2/XTrader.git
 [submodule "XServer"]
 	path = XServer
-	url = https://github.com/QuantFabric/XServer.git
+	url = git@github.com:Weatherbless2/XServer.git
 [submodule "XRiskJudge"]
 	path = XRiskJudge
 	url = https://github.com/QuantFabric/XRiskJudge.git
