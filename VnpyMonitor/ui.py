@@ -221,7 +221,9 @@ class SecurityUniversePanel(QtWidgets.QWidget):
 
 
 class VisibleCandleItem(CandleItem):
-    """在只有一根或平盘 Bar 时仍提供可绘制的纵轴范围。"""
+    """A-share candle with narrow bodies and clearly visible wicks."""
+
+    BODY_WIDTH = 0.26
 
     def __init__(self, manager) -> None:
         super().__init__(manager)
@@ -229,9 +231,44 @@ class VisibleCandleItem(CandleItem):
         down_color = QtGui.QColor("#16825d")
         # vn.py 默认用黑色填充上涨 K 线；A 股工作台沿用盘口的红涨绿跌约定。
         self._up_pen = QtGui.QPen(up_color)
+        self._up_pen.setWidth(1)
+        self._up_pen.setCosmetic(True)
         self._black_brush = QtGui.QBrush(up_color)
         self._down_pen = QtGui.QPen(down_color)
+        self._down_pen.setWidth(1)
+        self._down_pen.setCosmetic(True)
         self._down_brush = QtGui.QBrush(down_color)
+
+    def _draw_bar_picture(self, ix: int, bar: BarData) -> QtGui.QPicture:
+        """Draw a standard candle instead of a full-width color block."""
+        picture = QtGui.QPicture()
+        painter = QtGui.QPainter(picture)
+
+        is_up = bar.close_price >= bar.open_price
+        painter.setPen(self._up_pen if is_up else self._down_pen)
+        painter.setBrush(self._black_brush if is_up else self._down_brush)
+
+        # The wick always spans the actual high-low range. A flat minute bar
+        # remains a short horizontal line so it never turns into a giant body.
+        if bar.high_price > bar.low_price:
+            painter.drawLine(
+                QtCore.QPointF(ix, bar.high_price),
+                QtCore.QPointF(ix, bar.low_price),
+            )
+        if bar.open_price == bar.close_price:
+            painter.drawLine(
+                QtCore.QPointF(ix - self.BODY_WIDTH, bar.open_price),
+                QtCore.QPointF(ix + self.BODY_WIDTH, bar.open_price),
+            )
+        else:
+            painter.drawRect(QtCore.QRectF(
+                ix - self.BODY_WIDTH,
+                bar.open_price,
+                self.BODY_WIDTH * 2,
+                bar.close_price - bar.open_price,
+            ))
+        painter.end()
+        return picture
 
     def get_y_range(self, min_ix=None, max_ix=None):
         minimum, maximum = super().get_y_range(min_ix, max_ix)
@@ -240,9 +277,47 @@ class VisibleCandleItem(CandleItem):
             return minimum - padding, maximum + padding
         return minimum, maximum
 
+    def get_info_text(self, ix: int) -> str:
+        bar = self._manager.get_bar(ix)
+        if not bar:
+            return ""
+        return "\n".join((
+            bar.datetime.strftime("%Y-%m-%d %H:%M"),
+            f"开 {bar.open_price:.2f}  高 {bar.high_price:.2f}",
+            f"低 {bar.low_price:.2f}  收 {bar.close_price:.2f}",
+        ))
+
 
 class VisibleVolumeItem(VolumeItem):
     """成交量为零时扩展纵轴，避免空白图层误认为没有数据。"""
+
+    BODY_WIDTH = VisibleCandleItem.BODY_WIDTH
+
+    def __init__(self, manager) -> None:
+        super().__init__(manager)
+        self._up_pen = QtGui.QPen(QtGui.QColor("#c0392b"))
+        self._up_pen.setWidth(1)
+        self._up_pen.setCosmetic(True)
+        self._up_brush = QtGui.QBrush(QtGui.QColor("#c0392b"))
+        self._down_pen = QtGui.QPen(QtGui.QColor("#16825d"))
+        self._down_pen.setWidth(1)
+        self._down_pen.setCosmetic(True)
+        self._down_brush = QtGui.QBrush(QtGui.QColor("#16825d"))
+
+    def _draw_bar_picture(self, ix: int, bar: BarData) -> QtGui.QPicture:
+        picture = QtGui.QPicture()
+        painter = QtGui.QPainter(picture)
+        is_up = bar.close_price >= bar.open_price
+        painter.setPen(self._up_pen if is_up else self._down_pen)
+        painter.setBrush(self._up_brush if is_up else self._down_brush)
+        painter.drawRect(QtCore.QRectF(
+            ix - self.BODY_WIDTH,
+            0,
+            self.BODY_WIDTH * 2,
+            bar.volume,
+        ))
+        painter.end()
+        return picture
 
     def get_y_range(self, min_ix=None, max_ix=None):
         minimum, maximum = super().get_y_range(min_ix, max_ix)
@@ -338,7 +413,9 @@ class QuoteOverview(QtWidgets.QWidget):
 
 
 class RealtimeChartWidget(ChartWidget):
-    """展示当前会话累积的 1 分钟 K 线和成交量。"""
+    """Tonghuashun-style A-share candles backed by vn.py's chart widget."""
+
+    DEFAULT_VISIBLE_BARS = 100
 
     def __init__(self) -> None:
         super().__init__()
@@ -347,13 +424,6 @@ class RealtimeChartWidget(ChartWidget):
         self.add_item(VisibleCandleItem, "candle", "price")
         self.add_plot("volume", minimum_height=45)
         self.add_item(VisibleVolumeItem, "volume", "volume")
-        self.close_curve = self.get_plot("price").plot(
-            pen=QtGui.QPen(QtGui.QColor("#f15b54"), 2),
-            symbol="o",
-            symbolSize=6,
-            symbolPen=QtGui.QPen(QtGui.QColor("#f15b54")),
-            symbolBrush=QtGui.QBrush(QtGui.QColor("#171f28")),
-        )
         for plot in self.get_all_plots():
             plot.showGrid(x=True, y=True, alpha=0.18)
             plot.getAxis("right").setPen(QtGui.QPen(QtGui.QColor("#53697a")))
@@ -361,20 +431,20 @@ class RealtimeChartWidget(ChartWidget):
             plot.getAxis("bottom").setPen(QtGui.QPen(QtGui.QColor("#53697a")))
             plot.getAxis("bottom").setTextPen(QtGui.QPen(QtGui.QColor("#a7b7c3")))
 
-    def update_close_curve(self, bars) -> None:
-        self.close_curve.setData(
-            list(range(len(bars))),
-            [bar.close_price for bar in bars],
-        )
+    def show_recent_bars(self, count: int) -> None:
+        """Synchronize the visible window after every history repaint."""
+        total = self._manager.get_count()
+        self._bar_count = min(max(2, count), max(2, total))
+        self._right_ix = total
+        self._update_x_range()
+        self._update_y_range()
 
     def update_history(self, history) -> None:
         super().update_history(history)
-        # 只有当前分钟的一根 Bar 时，完整实体会占满纵轴并误导用户为异常行情。
-        # 此时保留收盘价点；累积出第二根真实 Bar 后再显示 K 线和成交量。
-        has_candle_history = len(history) > 1
-        self._items["candle"].setVisible(has_candle_history)
-        self._items["volume"].setVisible(has_candle_history)
-        self.close_curve.setVisible(not has_candle_history)
+        # 主图只绘制 K 线与成交量柱。不把价格曲线或指标图层混在行情图中，
+        # 以免他们的独立坐标范围遇到异常值时覆盖真实的蜗烛图。
+        self._items["candle"].setVisible(True)
+        self._items["volume"].setVisible(True)
         # ChartWidget 仅在横轴变化时自动刷新纵轴。启动初期只有一根 Bar 时横轴
         # 范围保持不变，必须主动重算，否则价格会被绘制在过期的坐标范围之外。
         self._update_y_range()
@@ -803,15 +873,14 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         bars = self._merge_chart_bars(vt_symbol)
         if not bars:
             self.chart.clear_all()
-            self.chart.update_close_curve([])
             return
         self.chart.clear_all()
-        # Keep one empty slot on each side of the first candle. Otherwise its
-        # x=0 center lies on the plot boundary and Qt clips the whole line.
-        self.chart._bar_count = max(2, min(60, len(bars)))
         history = list(bars.values())
         self.chart.update_history(history)
-        self.chart.update_close_curve(history)
+        # Do not only mutate _bar_count: ChartWidget needs the matching right
+        # index and x range refreshed, otherwise the candle picture can be
+        # stretched into misleading horizontal color blocks.
+        self.chart.show_recent_bars(self.chart.DEFAULT_VISIBLE_BARS)
 
     def _merge_chart_bars(self, vt_symbol: str) -> OrderedDict:
         """Overlay live data onto history after both use the selected period."""
@@ -819,9 +888,29 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             (bar.datetime, bar)
             for bar in self.history_bars.get((vt_symbol, self.history_interval), [])
         )
-        for bar in self._aggregate_live_bars(vt_symbol).values():
+        live_bars = self._aggregate_live_bars(vt_symbol)
+        if merged and live_bars and not self._live_bars_match_history(merged, live_bars):
+            # TestMarket deliberately generates independent demonstration
+            # quotes. Its price is not a continuation of ClickHouse history,
+            # so overlaying it would expand the y-axis and visually flatten
+            # all real candles. Keep the test quote in the order book and
+            # trading panel, but preserve an honest historical price chart.
+            return merged
+        for bar in live_bars.values():
             merged[bar.datetime] = bar
         return OrderedDict(sorted(merged.items()))
+
+    @staticmethod
+    def _live_bars_match_history(history: OrderedDict, live: OrderedDict) -> bool:
+        """Reject a simulated or malformed live price far from the last close."""
+        historical_close = next(reversed(history.values())).close_price
+        first_live_close = next(iter(live.values())).close_price
+        if historical_close <= 0 or first_live_close <= 0:
+            return False
+        # A-share daily limits make a 20% discontinuity an invalid chart
+        # overlay. This guard is intentionally display-only: it neither
+        # alters a real-time quote nor changes order/risk behavior.
+        return abs(first_live_close / historical_close - 1) <= 0.20
 
     def _aggregate_live_bars(self, vt_symbol: str) -> OrderedDict:
         source = self.bars.get(vt_symbol, OrderedDict())
