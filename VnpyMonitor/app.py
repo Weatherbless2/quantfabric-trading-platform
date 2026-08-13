@@ -27,8 +27,10 @@ def main() -> int:
                         help="AuthAdminService 操作员用户名")
     parser.add_argument("--password", default=os.getenv("QF_VNPY_PASSWORD", "123456"),
                         help="AuthAdminService 操作员密码")
-    parser.add_argument("--account", default=os.getenv("QF_VNPY_ACCOUNT", "188795"),
+    parser.add_argument("--account", default=os.getenv("QF_VNPY_ACCOUNT", "610000071840"),
                         help="本次会话申请使用的资金账户")
+    parser.add_argument("--product", default=os.getenv("QF_VNPY_PRODUCT", "ATPTest"),
+                        help="交易产品标识；必须与后台已发布配置和 ATPTrader 配置一致")
     parser.add_argument("--auth-url", default=os.getenv("QF_VNPY_AUTH_URL", "http://127.0.0.1:18080"),
                         help="AuthAdminService 地址")
     parser.add_argument("--history-url", default=os.getenv("QF_HISTORY_URL", ""),
@@ -52,6 +54,7 @@ def main() -> int:
         "用户": args.user,
         "密码": args.password,
         "资金账号": args.account,
+        "交易产品": args.product,
         "认证服务地址": args.auth_url,
         "历史行情地址": args.history_url,
     })

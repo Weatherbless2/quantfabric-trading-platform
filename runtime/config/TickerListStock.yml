@@ -23,3 +23,15 @@ TickerList:
     Ticker: 300750
     ExchangeID: SZSE
     PriceTick: 0.01
+  - TickerIndex: 6
+    Ticker: 600584
+    ExchangeID: SSE
+    PriceTick: 0.01
+  - TickerIndex: 7
+    Ticker: 688116
+    ExchangeID: SSE
+    PriceTick: 0.01
+  - TickerIndex: 8
+    Ticker: 002120
+    ExchangeID: SZSE
+    PriceTick: 0.01

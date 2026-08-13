@@ -121,6 +121,13 @@ class SecurityMasterRequest(BaseModel):
     min_quantity: int = Field(default=0, ge=0)
 
 
+class SecuritySyncRequest(BaseModel):
+    """A complete, validated replacement for one draft version's stock scope."""
+
+    source: str = Field(default="", max_length=128)
+    securities: list[SecurityMasterRequest] = Field(min_length=1, max_length=20_000)
+
+
 class FuturesProductRequest(BaseModel):
     market_code: str = Field(min_length=1, max_length=8, pattern=r"[^:]+")
     product_code: str = Field(min_length=1, max_length=16, pattern=r"[^:]+")

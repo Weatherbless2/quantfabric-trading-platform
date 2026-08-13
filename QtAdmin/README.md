@@ -16,7 +16,7 @@ cmake --build build --target QtAdmin_0.1.0 -j"$(nproc)"
 
 ```bash
 ./runtime/prepare.sh
-./runtime/start.sh test
+./runtime/start.sh
 ```
 
 然后启动桌面程序：

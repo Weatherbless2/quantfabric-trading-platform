@@ -143,6 +143,37 @@ class BusinessControlPlaneTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("validated", response.json()["detail"])
 
+    def test_draft_security_sync_replaces_scope_atomically(self) -> None:
+        session = self.login()
+        headers = {"X-QF-Session-ID": session["session_id"]}
+        security = {
+            "market_code": "S", "symbol": "600000", "name": "浦发银行",
+            "security_type": "stock", "exchange_symbol": "600000", "suspended": False,
+            "buy_allowed": True, "sell_allowed": True, "cancel_allowed": True,
+            "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100,
+            "max_quantity": 0, "min_quantity": 0,
+        }
+        with patch("BusinessAdminService.service.urlopen", side_effect=self.auth_urlopen):
+            version = self.client.post("/v1/config/versions", headers=headers,
+                                       json={"description": "security sync draft"}).json()["version"]
+            response = self.client.put(f"/v1/config/versions/{version}/securities:sync", headers=headers, json={
+                "source": "test", "securities": [security, security],
+            })
+            self.assertEqual(response.status_code, 422)
+            empty_response = self.client.get(f"/v1/config/securities?version={version}", headers=headers)
+            self.assertEqual(empty_response.status_code, 200)
+            empty = empty_response.json()
+            self.assertEqual(empty["total"], 0)
+            response = self.client.put(f"/v1/config/versions/{version}/securities:sync", headers=headers, json={
+                "source": "test", "securities": [security],
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"replaced": 0, "inserted": 1})
+            synced_response = self.client.get(f"/v1/config/securities?version={version}", headers=headers)
+            self.assertEqual(synced_response.status_code, 200)
+            synced = synced_response.json()
+        self.assertEqual(synced["total"], 1)
+
     def test_validation_requires_default_account_for_enabled_project(self) -> None:
         session = self.login()
         headers = {"X-QF-Session-ID": session["session_id"]}

@@ -124,12 +124,9 @@ class QuantFabricGateway(BaseGateway):
         "XServer端口": 8000,
         "用户": "admin",
         "密码": "123456",
-        "交易机房": "LocalTest",
-        # The checked-in desktop defaults are intentionally bound to the
-        # local TestTrader chain. Production account details are configured
-        # only after the broker integration has passed its separate review.
-        "交易产品": "Test",
-        "资金账号": "188795",
+        "交易机房": "ATPTest",
+        "交易产品": "ATPTest",
+        "资金账号": "610000071840",
         "认证服务地址": "http://127.0.0.1:18080",
         "OIDC访问令牌": "",
     }
@@ -197,7 +194,7 @@ class QuantFabricGateway(BaseGateway):
             str(setting.get("用户", "admin")),
             str(setting.get("密码", "123456")),
             session_id,
-            str(setting.get("交易机房", "LocalTest")),
+            str(setting.get("交易机房", "ATPTest")),
             str(setting.get("交易产品", "ATPTest")),
             self.account_id,
         )
@@ -474,6 +471,13 @@ class QuantFabricGateway(BaseGateway):
                 yd_volume=float(message.get("yesterday", 0) or 0),
             ))
         elif message_type == "order_status":
+            # XTrader publishes one token-zero initialization status while it
+            # verifies the risk channel. It is not a user order and must not
+            # appear as a rejected ATP order in the desktop workbench.
+            if (not int(message.get("order_token", 0) or 0)
+                    and not str(message.get("order_ref", "")).strip()
+                    and not float(message.get("volume", 0) or 0)):
+                return
             order = self._map_order(message)
             self.on_order(order)
             trace_id = order_trace_id(

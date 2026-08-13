@@ -23,9 +23,8 @@ for name in "${components[@]}"; do
     rm -f "${pid_file}"
 done
 
-# These names are fixed by the local test configuration and are safe to remove
-# only after all runtime processes above have stopped.
+# These shared-memory names are fixed by the runtime configurations and are
+# safe to remove only after all corresponding processes above have stopped.
 rm -f /dev/shm/MarketServer.shm \
-      /dev/shm/OrderServer188795.shm \
       /dev/shm/OrderServer610000071840.shm \
       /dev/shm/RiskServer.shm

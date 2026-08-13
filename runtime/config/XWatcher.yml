@@ -1,7 +1,7 @@
 XWatcherConfig:
   ServerIP: 127.0.0.1
   Port: 8001
-  Colo: LocalTest
+  Colo: ATPTest
   OpenTime: 00:00:00.000
   CloseTime: 23:59:59.999
   XServerIP: 127.0.0.1

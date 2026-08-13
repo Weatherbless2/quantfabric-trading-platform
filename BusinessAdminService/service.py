@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 from fastapi import FastAPI, Header, HTTPException, Query, status
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Select, create_engine, desc, func, inspect, select
+from sqlalchemy import Select, create_engine, delete, desc, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -53,6 +53,7 @@ from .schemas import (
     ProductRequest,
     ProjectAccountRequest,
     SecurityMasterRequest,
+    SecuritySyncRequest,
     ValidationIssue,
     ValidationResponse,
     VersionCreate,
@@ -376,6 +377,38 @@ class BusinessService:
         version_row.status = "DRAFT"
         self.audit(db, version, actor, "business:delete", definition.name, key)
 
+    def replace_securities(self, db: Session, version: int,
+                           request: SecuritySyncRequest, actor: str) -> dict[str, int]:
+        """Atomically replace the stock rules of a draft configuration version.
+
+        A full source snapshot is safer than a sequence of thousands of HTTP
+        upserts: either every source symbol is published together, or the
+        previous draft contents remain intact after a validation failure.
+        """
+        version_row = self.ensure_draft(db, version)
+        definition = RESOURCES["securities"]
+        rows: list[SecurityMaster] = []
+        keys: set[tuple[str, str]] = set()
+        for payload in request.securities:
+            data = payload.model_dump()
+            key = (data["market_code"], data["symbol"])
+            if key in keys:
+                raise HTTPException(status_code=422,
+                                    detail=f"duplicate security in synchronization input: {key[0]}:{key[1]}")
+            keys.add(key)
+            rows.append(SecurityMaster(version_id=version_row.id, **data))
+        previous = db.scalar(select(func.count()).select_from(SecurityMaster).where(
+            SecurityMaster.version_id == version_row.id)) or 0
+        db.execute(delete(SecurityMaster).where(SecurityMaster.version_id == version_row.id))
+        db.add_all(rows)
+        version_row.status = "DRAFT"
+        self.audit(db, version, actor, "business:sync", definition.name, "*", {
+            "source": request.source,
+            "replaced": int(previous),
+            "inserted": len(rows),
+        })
+        return {"replaced": int(previous), "inserted": len(rows)}
+
     def validate_version(self, db: Session, version: int, actor: str | None = None) -> ValidationResponse:
         item = self.get_version(db, version)
         if item.status not in {"DRAFT", "VALIDATED"}:
@@ -579,6 +612,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown configuration resource")
         with service.session_factory.begin() as db:
             service.delete_resource(db, definition, version, key, actor)
+
+    @app.put("/v1/config/versions/{version}/securities:sync")
+    def sync_securities(version: int, request: SecuritySyncRequest,
+                        session_id: str = Header(alias="X-QF-Session-ID")) -> dict[str, int]:
+        actor = require(session_id, "business:write", "business/securities")
+        with service.session_factory.begin() as db:
+            return service.replace_securities(db, version, request, actor)
 
     @app.get("/v1/operations/asset-snapshots", response_model=list[AssetSnapshotResponse])
     def list_asset_snapshots(project_id: int | None = Query(default=None, ge=1),

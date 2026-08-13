@@ -33,13 +33,13 @@ sudo apt-get update
 sudo apt-get install -y fonts-noto-cjk libxcb-cursor0
 ```
 
-## 安全 test 启动
+## ATP 测试柜台启动
 
 ```bash
 cmake -S . -B build -DPython3_EXECUTABLE="$PWD/.vnpy-venv/bin/python"
 cmake --build build --target quantfabric_native -j"$(nproc)"
 ./runtime/prepare.sh
-./runtime/start.sh test
+./runtime/start.sh
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
 
@@ -60,12 +60,9 @@ vn.py Qt -> quantfabric_native -> XServer -> C++ 实时行情、风控、交易
 界面仍可使用实时行情和交易；K 线仅从前端启动后开始累积。
 
 本地开发使用 `admin` / `123456` 向 AuthAdminService 换取短会话。桌面密码不会写入
-XServer 的 PackMessage 登录包。默认账户 `188795` 与 `TestTrader` 测试链路对应。
-
-选择证券库中的任意沪深 A 股后，工作台会发送订阅请求；测试行情网关仅为已订阅标的
-按需生成模拟五档行情。收到该标的首笔报价前，买卖按钮保持禁用。`TestTrader` 对通过
-风控的委托产生模拟全成、资金和持仓回报。它不连接 pytdx、ATP 或真实柜台，不能用于
-真实交易。
+XServer 的 PackMessage 登录包。默认产品和账户为 `ATPTest / 610000071840`。
+实时行情由 pytdx 适配器进入 XMarketCenter；资金、持仓、委托和成交来自
+`ATPTrader -> ATP SDK -> AGW`。报单和撤单不会绕过后台发布规则或 C++ 风控。
 
 ## 权限后台到交易工作台的操作链路
 
@@ -83,13 +80,14 @@ QtAdmin 创建用户/策略/账户授权
 2. 在“用户”中新建操作员；用户名为 `alice` 时，Casbin 主体写作 `user:alice`。
 3. 在“策略”中新增该用户的行情规则，例如：域 `desk:cn_equity`、资源
    `market/SZSE/instrument/300007`、动作 `market:subscribe`。
-4. 在“账户授权”中为 `user:alice`、账户 `188795` 依次授予 `account:read`、
+4. 在“账户授权”中为 `user:alice`、账户 `610000071840` 依次授予 `account:read`、
    `order:read`、`order:create`、`order:cancel`。
 5. 在新终端以该操作员启动工作台：
 
 ```bash
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app \
-  --user alice --password '用户创建时设置的密码' --account 188795
+  --user alice --password '用户创建时设置的密码' \
+  --account 610000071840 --product ATPTest
 ```
 
 未配置行情策略时订阅会被拒绝；未配置 `order:create` 时下单会被拒绝。结果均会出现在
@@ -101,17 +99,17 @@ QtAdmin 的“审计”页和 XServer 日志中。已运行的桌面会话保留
 | Casbin 资源与动作 | 获得后可以做什么 | 未获得时的表现 |
 | --- | --- | --- |
 | `market/SZSE/instrument/000014` + `market:subscribe` | 订阅指定股票的实时行情和五档盘口 | XServer 拒绝订阅，当前标的不会收到报价，买卖按钮保持禁用 |
-| `account/188795` + `account:read` | 查看该账户的资金和持仓推送 | 看不到该账户的资金、持仓回报 |
-| `account/188795` + `order:read` | 查看该账户的委托和成交状态 | 看不到该账户的委托状态回报 |
-| `account/188795` + `order:create` | 发起买入或卖出委托 | XServer 拒绝委托，审计页记录拒绝原因 |
-| `account/188795` + `order:cancel` | 撤销仍处于可撤状态的委托 | XServer 拒绝撤单，审计页记录拒绝原因 |
+| `account/610000071840` + `account:read` | 查看该账户的资金和持仓推送 | 看不到该账户的资金、持仓回报 |
+| `account/610000071840` + `order:read` | 查看该账户的委托和成交状态 | 看不到该账户的委托状态回报 |
+| `account/610000071840` + `order:create` | 发起买入或卖出委托 | XServer 拒绝委托，审计页记录拒绝原因 |
+| `account/610000071840` + `order:cancel` | 撤销仍处于可撤状态的委托 | XServer 拒绝撤单，审计页记录拒绝原因 |
 
-本地 `admin` 是开发全权限账户；普通操作员建议只授予其负责账户和标的的最小权限。测试
-订单会立即全成，因此测试模式下不会出现可撤委托；这不是 `order:cancel` 规则失效。
+本地 `admin` 是开发全权限账户；普通操作员建议只授予其负责账户和标的的最小权限。
+ATP 测试柜台决定订单是否成交以及是否可撤，界面只对活动委托开放撤单。
 
-`--user`、`--password`、`--account`、`--auth-url` 也可分别使用
-`QF_VNPY_USER`、`QF_VNPY_PASSWORD`、`QF_VNPY_ACCOUNT`、`QF_VNPY_AUTH_URL`
-环境变量设置。
+`--user`、`--password`、`--account`、`--product`、`--auth-url` 也可分别使用
+`QF_VNPY_USER`、`QF_VNPY_PASSWORD`、`QF_VNPY_ACCOUNT`、`QF_VNPY_PRODUCT`、
+`QF_VNPY_AUTH_URL` 环境变量设置。
 
 ## 当前功能
 
@@ -133,6 +131,5 @@ QtAdmin 的“审计”页和 XServer 日志中。已运行的桌面会话保留
 展示历史日线或分钟线，需要启动 `HistoryDataService` 并配置其只读数据源。未来公司行情
 接口提供历史 K 线后，在该服务的数据源适配层接入，不改变 vn.py 图表和 C++ 交易链路。
 
-`real-readonly` 会连接行情和柜台只读查询，但 C++ 柜台插件拒绝交易请求。
-`real-trade` 会开放人工委托，必须在公司行情、柜台配置、账户授权和端到端风控
-验收均通过后，由人工明确执行；当前不要使用该模式。
+当前唯一标准启动模式为 ATP 测试柜台全功能模式：查询、限价买卖和撤单均已开放，
+同时继续受后台发布配置、Casbin、XServer 和 XRiskJudge 约束。

@@ -67,7 +67,7 @@ PostgreSQL 部署时先创建专用数据库，再按顺序执行
 export QF_BUSINESS_POLICY_ENABLED=true
 export QF_BUSINESS_POLICY_REFRESH_SECONDS=30
 ./runtime/prepare.sh
-./runtime/start.sh test
+./runtime/start.sh
 ```
 
 未设置开关或值为 `false` 时，XServer 保持原有测试行为。启用后，启动日志应出现

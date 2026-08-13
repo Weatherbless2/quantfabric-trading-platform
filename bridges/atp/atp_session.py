@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""ATP 连接与只读查询诊断程序。
+"""ATP 连接、登录和查询会话工具。
 
-该程序刻意不实现报单和撤单接口，用于先确认 SDK、AGW、客户登录及查询链路。
+该诊断入口不发送委托，用于独立确认 SDK、AGW、客户登录及查询链路。
 """
 
 import argparse
@@ -43,7 +43,7 @@ class Sequence:
             return self._value
 
 
-class ReadOnlyHandler(ATPTradeHandler):
+class DiagnosticHandler(ATPTradeHandler):
     def __init__(self):
         super().__init__()
         self.agw_login = threading.Event()
@@ -158,7 +158,7 @@ def run_queries(api, handler, config, sequence, timeout):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ATP 只读登录和查询诊断")
+    parser = argparse.ArgumentParser(description="ATP 登录和查询诊断")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
@@ -178,7 +178,7 @@ def main():
     require_success("sdk_init", init_result)
 
     api = ATPTradeAPI()
-    handler = ReadOnlyHandler()
+    handler = DiagnosticHandler()
     sequence = Sequence()
     agw = config["agw"]
     connect_config = {
@@ -204,7 +204,7 @@ def main():
         wait_for(handler.customer_login, "客户登录", args.timeout, handler)
 
         run_queries(api, handler, config, sequence, args.timeout)
-        print(json.dumps({"event": "diagnostic_complete", "readonly": True}), flush=True)
+        print(json.dumps({"event": "diagnostic_complete", "orders_sent": False}), flush=True)
     finally:
         if handler.customer_login.is_set():
             logout = {
