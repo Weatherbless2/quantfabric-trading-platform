@@ -14,7 +14,7 @@ import string
 import time
 from base64 import b64encode
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time as clock_time
 from decimal import Decimal
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -27,7 +27,10 @@ from psycopg.rows import dict_row
 
 
 EXCHANGE_NAMES = {"SSE", "SZSE"}
-INTERVAL_MINUTES = {1, 5, 15}
+# The database stores one-minute rows. Intraday periods are aggregated from
+# those rows, while 1440 is the public API value for one trading-day candle.
+SUPPORTED_INTERVALS = {1, 5, 15, 30, 60, 1440}
+DAILY_INTERVAL = 1440
 # ClickHouse is the active full-history source. PostgreSQL remains a supported
 # migration fallback for teams that already deployed the former service.
 DEFAULT_BACKEND = "clickhouse"
@@ -43,7 +46,8 @@ AUTH_INTERNAL_KEY = os.getenv("QF_AUTH_INTERNAL_KEY", "")
 DEFAULT_DOMAIN = os.getenv("QF_AUTH_DEFAULT_DOMAIN", "desk:cn_equity")
 DEFAULT_MARKET_CODES = "SSE=S,SZSE=S"
 DEFAULT_SYMBOL_TEMPLATE = "{exchange}:{symbol}"
-DEFAULT_MAX_RAW_BARS = 30_100
+# A 240-bar daily chart needs roughly one trading year of one-minute rows.
+DEFAULT_MAX_RAW_BARS = 100_000
 DEFAULT_STALE_CACHE_SECONDS = 60
 
 
@@ -337,13 +341,35 @@ def _number(value: Decimal | int | float | str | None) -> float:
     return float(value)
 
 
+def _bar_bucket(timestamp: datetime, interval: int) -> datetime:
+    """Return the display bucket for an intraday or daily candle."""
+    if interval == DAILY_INTERVAL:
+        return datetime.combine(timestamp.date(), clock_time(), tzinfo=timestamp.tzinfo)
+    bucket_minute = (timestamp.minute // interval) * interval
+    return timestamp.replace(minute=bucket_minute, second=0, microsecond=0)
+
+
+def _source_bar_limit(interval: int, limit: int) -> int:
+    """Estimate the minute rows required to build the requested chart."""
+    if interval == DAILY_INTERVAL:
+        # China A-share cash sessions contain 240 trading minutes per day.
+        # Reserve one extra day so the first returned daily bucket is complete.
+        return limit * 240 + 240
+    # Reserve one incomplete intraday bucket at the query boundary.
+    return limit * interval + interval
+
+
+def _interval_label(interval: int) -> str:
+    """Keep the public response explicit without exposing storage details."""
+    return "1d" if interval == DAILY_INTERVAL else f"{interval}m"
+
+
 def _aggregate_bars(rows: list[dict[str, Any]], interval: int, limit: int) -> list[dict[str, Any]]:
     """Turn source one-minute rows into the source-independent OHLCV contract."""
     grouped: dict[datetime, dict[str, Any]] = {}
     for row in reversed(rows):
         timestamp: datetime = row["trdtime"]
-        bucket_minute = (timestamp.minute // interval) * interval
-        bucket = timestamp.replace(minute=bucket_minute, second=0, microsecond=0)
+        bucket = _bar_bucket(timestamp, interval)
         current = grouped.get(bucket)
         if current is None:
             grouped[bucket] = {
@@ -411,14 +437,14 @@ def create_app() -> FastAPI:
     def minute_bars(
         symbol: str = Query(min_length=1, max_length=6, pattern=r"\d{6}"),
         exchange: str = Query(min_length=3, max_length=4),
-        interval: int = Query(default=1, alias="interval", ge=1, le=15),
+        interval: int = Query(default=1, alias="interval", ge=1, le=DAILY_INTERVAL),
         limit: int = Query(default=240, ge=1, le=2000),
         session_id: str = Header(alias="X-QF-Session-ID"),
     ) -> dict[str, Any]:
         exchange = exchange.upper()
         if exchange not in EXCHANGE_NAMES:
             raise HTTPException(status_code=400, detail="unsupported exchange")
-        if interval not in INTERVAL_MINUTES:
+        if interval not in SUPPORTED_INTERVALS:
             raise HTTPException(status_code=400, detail="unsupported interval")
         _auth_session(session_id, symbol, exchange)
         market_code, stock_code = source.instrument(symbol, exchange)
@@ -428,7 +454,7 @@ def create_app() -> FastAPI:
         # A bucket can straddle the query boundary. Fetch one extra interval
         # and trim after aggregation so requesting N 15-minute bars returns N
         # complete periods whenever the table has sufficient data.
-        raw_limit = limit * interval + interval
+        raw_limit = _source_bar_limit(interval, limit)
         if raw_limit > source.max_raw_bars:
             raise HTTPException(
                 status_code=422,
@@ -449,7 +475,7 @@ def create_app() -> FastAPI:
         payload = {
             "symbol": symbol,
             "exchange": exchange,
-            "interval": f"{interval}m",
+            "interval": _interval_label(interval),
             "bars": _aggregate_bars(rows, interval, limit),
             "stale": False,
         }

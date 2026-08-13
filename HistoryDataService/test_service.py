@@ -8,9 +8,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from HistoryDataService.service import (
+    DAILY_INTERVAL,
     DEFAULT_BACKEND,
     DEFAULT_CLICKHOUSE_DATABASE,
     HistorySource,
+    _aggregate_bars,
     _clickhouse_rows,
     _clickhouse_query,
     _source_summary,
@@ -198,6 +200,30 @@ class HistoryContractTest(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 400)
         authorize.assert_not_called()
+
+    def test_daily_history_groups_all_minutes_of_one_trade_date(self) -> None:
+        rows = [
+            {"trdtime": datetime(2026, 8, 12, 13, 1), "open": 11, "high": 12,
+             "low": 10.5, "close": 11.5, "vol": 200, "amt": 2300},
+            {"trdtime": datetime(2026, 8, 12, 9, 31), "open": 10, "high": 11,
+             "low": 9, "close": 10.5, "vol": 100, "amt": 1000},
+        ]
+        bars = _aggregate_bars(rows, DAILY_INTERVAL, 1)
+        self.assertEqual(bars, [{
+            "datetime": "2026-08-12T00:00:00", "open": 10.0, "high": 12.0,
+            "low": 9.0, "close": 11.5, "volume": 300.0, "turnover": 3300.0,
+        }])
+
+    def test_daily_history_fetches_enough_minute_rows(self) -> None:
+        with patch("HistoryDataService.service._auth_session"), \
+                patch("HistoryDataService.service._fetch_rows", return_value=[]) as fetch_rows:
+            response = TestClient(create_app()).get(
+                "/v1/history/minute?symbol=000014&exchange=SZSE&interval=1440&limit=2",
+                headers={"X-QF-Session-ID": "a" * 30},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["interval"], "1d")
+        self.assertEqual(fetch_rows.call_args.args[-1], 720)
 
     def test_decimal_number_is_json_safe(self) -> None:
         self.assertEqual(_number(Decimal("18.56")), 18.56)

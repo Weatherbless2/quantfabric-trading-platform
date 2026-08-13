@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections import OrderedDict
+from datetime import datetime, time as clock_time
 
 from vnpy.chart import CandleItem, ChartWidget, VolumeItem
 from vnpy.event import Event
@@ -450,6 +451,11 @@ class RealtimeChartWidget(ChartWidget):
         self._update_y_range()
 
 
+def _period_label(interval: int) -> str:
+    """Render the API's daily interval as the familiar trader-facing name."""
+    return "日" if interval == 1440 else f"{interval} 分钟"
+
+
 def _bar_from_history(vt_symbol: str, history_bar: HistoryBar) -> BarData:
     """Convert the HTTP history contract to vn.py's chart-native object."""
     symbol, exchange_value = vt_symbol.rsplit(".", 1)
@@ -671,6 +677,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.interval_combo.addItem("1 分钟", 1)
         self.interval_combo.addItem("5 分钟", 5)
         self.interval_combo.addItem("15 分钟", 15)
+        self.interval_combo.addItem("30 分钟", 30)
+        self.interval_combo.addItem("60 分钟", 60)
+        self.interval_combo.addItem("日 K", 1440)
         self.interval_combo.currentIndexChanged.connect(self._interval_changed)
         chart_header.addWidget(self.interval_combo)
         left_layout.addLayout(chart_header)
@@ -773,7 +782,7 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.trading_panel.set_symbol(vt_symbol, tick)
         name = self.security_names.get(vt_symbol, vt_symbol.rsplit(".", 1)[0])
         self.quote_overview.set_symbol(vt_symbol, name, tick)
-        self.chart_title.setText(f"{name} {self.history_interval} 分钟 K 线")
+        self.chart_title.setText(f"{name} {_period_label(self.history_interval)} K 线")
         self.subscribe_selected()
         self._load_history(vt_symbol)
         self._render_chart(vt_symbol)
@@ -781,7 +790,7 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
     def _interval_changed(self, index: int) -> None:
         self.history_interval = int(self.interval_combo.itemData(index))
         name = self.security_names.get(self.selected_vt_symbol, self.selected_vt_symbol)
-        self.chart_title.setText(f"{name} {self.history_interval} 分钟 K 线")
+        self.chart_title.setText(f"{name} {_period_label(self.history_interval)} K 线")
         self._load_history(self.selected_vt_symbol)
 
     def _history_service_setting(self) -> tuple[str, str]:
@@ -918,8 +927,15 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             return source
         result: OrderedDict = OrderedDict()
         for source_bar in source.values():
-            minute = (source_bar.datetime.minute // self.history_interval) * self.history_interval
-            bucket = source_bar.datetime.replace(minute=minute, second=0, microsecond=0)
+            if self.history_interval == 1440:
+                bucket = datetime.combine(
+                    source_bar.datetime.date(),
+                    clock_time(),
+                    tzinfo=source_bar.datetime.tzinfo,
+                )
+            else:
+                minute = (source_bar.datetime.minute // self.history_interval) * self.history_interval
+                bucket = source_bar.datetime.replace(minute=minute, second=0, microsecond=0)
             bar = result.get(bucket)
             if bar is None:
                 bar = BarData(

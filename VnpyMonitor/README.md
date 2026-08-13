@@ -45,7 +45,7 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 
 ## 历史 K 线
 
-工作台的 `1 分钟`、`5 分钟`、`15 分钟` 周期按钮会优先从
+工作台的 `1`、`5`、`15`、`30`、`60 分钟` 与 `日 K` 周期按钮会优先从
 `HistoryDataService` 加载 ClickHouse 中的分钟 K 线，再用本次桌面会话的实时行情
 覆盖当前周期。历史查询和实时订阅分别需要 Casbin 的 `market:history` 与
 `market:subscribe` 权限；两者都由服务端校验，前端不直连数据库。
