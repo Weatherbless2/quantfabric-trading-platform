@@ -92,6 +92,23 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 
 订单、成交、资金和持仓回报沿 `XTrader -> XWatcher -> XServer -> quantfabric_native -> VnpyMonitor` 返回。前端只能展示状态，不能把“已成交”或“已撤单”写死在界面上。
 
+### 4. 公司行情接口替换边界
+
+历史 PostgreSQL、pytdx 和未来公司行情 SDK 都是数据源，不是交易协议的一部分。它们必须在
+各自的适配层完成字段、交易所代码和证券代码转换，再输出统一数据契约：
+
+```text
+实时：公司行情 SDK -> XMarketCenter 插件 -> PackMessage 行情 -> XWatcher/XServer/vn.py
+历史：公司历史接口或行情库 -> HistoryDataService -> OHLCV HTTP -> vn.py K 线
+交易：vn.py -> XServer -> XRiskJudge -> XTrader -> 柜台
+```
+
+这三条路径故意解耦：替换实时行情供应商只新增或替换 `XMarketCenter` 插件；替换历史数据源
+只调整 `HistoryDataService` 的源映射或实现；二者均不得改写 XServer 风控、订单协议或柜台
+适配。历史数据短暂不可用时，前端可展示经过授权的短时缓存或继续累积实时 K 线，但不得将
+缓存价格作为下单定价依据。实时行情断开时，由行情状态、价格有效性检查和 C++ 风控阻止使用
+失效价格继续交易。
+
 ## 当前不做
 
 - 不保留桌面端 Python/C++ 中间进程；`quantfabric_native` 是进程内绑定，不是桥接服务。

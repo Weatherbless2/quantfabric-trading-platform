@@ -160,7 +160,9 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
 
 未设置 `QF_HISTORY_URL` 时，工作台仅绘制本次运行以来的实时 K 线，不会尝试连接
-历史服务，也不会影响订阅、风控或交易。
+历史服务，也不会影响订阅、风控或交易。历史服务对 PostgreSQL 的表编码通过环境变量适配；
+未来公司行情接口接入时，实时行情替换 `XMarketCenter` 插件，历史数据实现相同 OHLCV
+接口即可，vn.py、XServer、风控和柜台链路不需要改动。
 
 `test` 是本地 A 股模拟链路：从证券库选择股票后，模拟行情经 XMarketCenter 按需生成；
 手工委托经过 XServer、XRiskJudge 与 TestTrader 后返回模拟成交、资金和持仓。它不连接
