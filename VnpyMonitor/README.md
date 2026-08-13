@@ -46,16 +46,16 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ## 历史 K 线
 
 工作台的 `1 分钟`、`5 分钟`、`15 分钟` 周期按钮会优先从
-`HistoryDataService` 加载 PostgreSQL 中的分钟 K 线，再用本次桌面会话的实时行情
+`HistoryDataService` 加载 ClickHouse 中的分钟 K 线，再用本次桌面会话的实时行情
 覆盖当前周期。历史查询和实时订阅分别需要 Casbin 的 `market:history` 与
 `market:subscribe` 权限；两者都由服务端校验，前端不直连数据库。
 
 ```text
-vn.py Qt -> HistoryDataService -> PostgreSQL 分钟 K 线
+vn.py Qt -> HistoryDataService -> ClickHouse 分钟 K 线
 vn.py Qt -> quantfabric_native -> XServer -> C++ 实时行情、风控、交易
 ```
 
-历史服务的 Windows/WSL 启动和网络配置见
+历史服务的本机启动和数据源配置见
 [`HistoryDataService/README.md`](../HistoryDataService/README.md)。在服务未部署时，
 界面仍可使用实时行情和交易；K 线仅从前端启动后开始累积。
 
@@ -130,8 +130,8 @@ QtAdmin 的“审计”页和 XServer 日志中。已运行的桌面会话保留
 品种需补齐各自的合约映射和风控规则后再接入。
 
 当前行情链路只提供实时快照，因此 K 线不伪造启动前的历史数据。要在打开标的时立即
-展示历史日线或分钟线，需要公司行情接口提供历史 K 线查询能力，再通过 C++ 行情链路
-接入 vn.py 图表。
+展示历史日线或分钟线，需要启动 `HistoryDataService` 并配置其只读数据源。未来公司行情
+接口提供历史 K 线后，在该服务的数据源适配层接入，不改变 vn.py 图表和 C++ 交易链路。
 
 `real-readonly` 会连接行情和柜台只读查询，但 C++ 柜台插件拒绝交易请求。
 `real-trade` 会开放人工委托，必须在公司行情、柜台配置、账户授权和端到端风控

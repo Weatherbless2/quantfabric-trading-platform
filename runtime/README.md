@@ -92,10 +92,12 @@ ready:
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
 
-Historical PostgreSQL minute bars are intentionally not started by
-`runtime/start.sh`: the current database listens only on Windows loopback.
-Start `HistoryDataService` beside that database and export `QF_HISTORY_URL` in
-WSL before launching `VnpyMonitor`. See
+Historical ClickHouse minute bars are intentionally not started by
+`runtime/start.sh`: historical data must not make the C++ trading runtime depend
+on database credentials or availability. Copy `runtime/config/HistoryData.env.example`
+to the Git-ignored `runtime/config/HistoryData.env`, set the local read-only
+ClickHouse account, then run `./runtime/start-history-data.sh` and export
+`QF_HISTORY_URL=http://127.0.0.1:18081` before launching `VnpyMonitor`. See
 [HistoryDataService/README.md](../HistoryDataService/README.md). Without this
 variable the workbench remains fully usable with real-time bars only.
 

@@ -94,7 +94,7 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 
 ### 4. 公司行情接口替换边界
 
-历史 PostgreSQL、pytdx 和未来公司行情 SDK 都是数据源，不是交易协议的一部分。它们必须在
+历史 ClickHouse、pytdx 和未来公司行情 SDK 都是数据源，不是交易协议的一部分。它们必须在
 各自的适配层完成字段、交易所代码和证券代码转换，再输出统一数据契约：
 
 ```text
@@ -114,7 +114,7 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 - 不保留桌面端 Python/C++ 中间进程；`quantfabric_native` 是进程内绑定，不是桥接服务。
 - 不让 vn.py GUI 绕过 XServer、XRiskJudge 或 XTrader 直接访问柜台。
 - 不使用 Redis、Keycloak、审批流、多租户和复杂的权限树。
-- 不让桌面客户端直连 PostgreSQL，也不让客户端直接调用 ATP。
+- 不让桌面客户端直连 ClickHouse 或 PostgreSQL，也不让客户端直接调用 ATP。
 
 ## 业务控制面与运行时配置
 
@@ -148,4 +148,4 @@ XMarketCenter 同时可将行情写入共享内存，供后续的 XQuant 使用�
 
 ## 现状与目标
 
-当前仓库已有 QuantFabric C++ 核心、AuthAdminService、`QtAdmin`，以及 vn.py `VnpyMonitor` 和进程内 `quantfabric_native` 客户端。`test` 已能验证 A 股模拟行情、会话鉴权、股票风控、模拟成交、资金和持仓回报；全量行情、历史 K 线、真实 ATP 订单状态机和完整交易验收仍未完成，不能把本仓库描述为已有完整生产桌面交易端。
+当前仓库已有 QuantFabric C++ 核心、AuthAdminService、`QtAdmin`，以及 vn.py `VnpyMonitor` 和进程内 `quantfabric_native` 客户端。`test` 已能验证 A 股模拟行情、会话鉴权、股票风控、模拟成交、资金和持仓回报；`HistoryDataService` 已通过服务器 ClickHouse 的全量一分钟数据加载历史 K 线。公司实时行情、真实 ATP 订单状态机和完整交易验收仍未完成，不能把本仓库描述为已有完整生产桌面交易端。

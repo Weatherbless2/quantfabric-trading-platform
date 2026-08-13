@@ -9,7 +9,7 @@
 > 当前仓库用于学习、开发和 ATP 模拟/测试柜台验证。未完成风控、账户授权和柜台
 > 配置审核前，禁止用于真实交易。
 
-## 当前进度（2026-08-12）
+## 当前进度（2026-08-13）
 
 当前处于“本地模拟交易闭环 + 第一版业务控制面”阶段，尚未进入真实柜台上线阶段。
 
@@ -17,10 +17,10 @@
 |---|---|---|
 | 1. C++ 核心交易面 | 已完成 | `XServer -> XWatcher -> XRiskJudge -> XTrader`，共享内存行情链路与 TestTrader 模拟成交。 |
 | 2. 认证与权限控制面 | 已完成 | `AuthAdminService`、短会话、Casbin、菜单与账户动作授权、审计。 |
-| 3. vn.py 交易桌面 | 已完成 | `VnpyMonitor`、实时行情、K 线、资金、持仓、委托、成交、下单和撤单入口。 |
+| 3. vn.py 交易桌面 | 已完成 | `VnpyMonitor`、实时行情、ClickHouse 全量分钟 K 线、资金、持仓、委托、成交、下单和撤单入口。 |
 | 4. 业务后台管理 | 已完成第一版 | `BusinessAdminService` 的主数据、资产单元、账户关联、草稿、校验、发布、退役和审计。 |
 | 5. 控制面与交易面联调 | 已完成 | XServer 只加载 `PUBLISHED` 版本，支持原子热更新，并校验订阅、下单和撤单规则。 |
-| 6. 真实行情与真实柜台 | 未开始 | 仍缺公司行情 SDK/字段映射、柜台测试环境验收、断线恢复和生产风控验收。 |
+| 6. 真实行情与真实柜台 | 未开始 | 历史 K 线已接服务器 ClickHouse；仍缺公司实时行情 SDK/字段映射、柜台测试环境验收、断线恢复和生产风控验收。 |
 
 已确认：vn.py 通过进程内 `quantfabric_native` C++ 扩展使用 HPSocket + PackMessage
 连接 XServer；不存在桌面端 Python/C++ 桥接进程。Redis、Keycloak、复杂审批流、多租户，
@@ -33,7 +33,7 @@ flowchart LR
     QtAdmin["QtAdmin<br/>C++ Qt 管理端"] -->|HTTP 管理 API| Auth["AuthAdminService<br/>登录、短会话、Casbin"]
     Vnpy["VnpyMonitor<br/>vn.py Qt 交易工作台"] -->|HTTP 登录| Auth
     Vnpy -->|已鉴权历史 K 线| History["HistoryDataService<br/>只读历史行情"]
-    History -->|只读查询| Postgres["PostgreSQL<br/>分钟 K 线"]
+    History -->|只读查询| ClickHouse["ClickHouse tdxdata<br/>分钟 K 线"]
     History -->|market:history 授权| Auth
     Vnpy --> Native["quantfabric_native<br/>进程内 C++ 客户端"]
     Native <-->|HPSocket + PackMessage| XServer["XServer<br/>会话与账户权限"]
@@ -151,16 +151,19 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ./build/QtAdmin_0.1.0
 ```
 
-若已按 [HistoryDataService/README.md](HistoryDataService/README.md) 在 PostgreSQL
-所在 Windows 主机启动历史服务，在 WSL 中额外设置其地址后启动工作台：
+若已按 [HistoryDataService/README.md](HistoryDataService/README.md) 配置服务器上
+`tdxdata` ClickHouse 的只读账号并启动历史服务，在本机额外设置其地址后启动工作台：
 
 ```bash
-export QF_HISTORY_URL="http://$(ip -4 route | awk '/default/{print $3; exit}'):18081"
+cp runtime/config/HistoryData.env.example runtime/config/HistoryData.env
+# 编辑 HistoryData.env，填写本机保存的 ClickHouse 只读账号和密码。
+./runtime/start-history-data.sh
+export QF_HISTORY_URL=http://127.0.0.1:18081
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
 
 未设置 `QF_HISTORY_URL` 时，工作台仅绘制本次运行以来的实时 K 线，不会尝试连接
-历史服务，也不会影响订阅、风控或交易。历史服务对 PostgreSQL 的表编码通过环境变量适配；
+历史服务，也不会影响订阅、风控或交易。历史服务对 ClickHouse 的表编码通过环境变量适配；
 未来公司行情接口接入时，实时行情替换 `XMarketCenter` 插件，历史数据实现相同 OHLCV
 接口即可，vn.py、XServer、风控和柜台链路不需要改动。
 
@@ -207,9 +210,11 @@ cmake --build build --target XServerRuntimePolicyTest -j"$(nproc)"
 采取 fail-closed。撤单通过 XServer 从订单回报建立的 `OrderRef` 索引取得证券上下文，继续
 执行已发布版本的 `cancel_allowed`，不改变现有 `PackMessage` 协议。
 
-最近一次完整验证覆盖：后台 API 和 Casbin、历史服务、vn.py 网关、C++ 运行时策略解析、
-完整启动、策略禁买拒单以及恢复策略后的 TestTrader 模拟成交。XServer 同时已加入空闲队列
-退避，避免没有业务消息时占满一个 CPU 核；兼容登录表的密码和失败登录密码不会再写入日志。
+最近一次完整验证覆盖：后台 API 和 Casbin、ClickHouse 历史服务、vn.py 历史接口契约、
+C++ 运行时策略解析、完整启动、策略禁买拒单以及恢复策略后的 TestTrader 模拟成交。历史服务
+已用 `tdxdata.stkprice_1min` 的真实 `SZSE:000001` 数据验收 5 分钟 K 线。XServer 同时已
+加入空闲队列退避，避免没有业务消息时占满一个 CPU 核；兼容登录表的密码和失败登录密码不会
+写入日志。
 
 更完整的运行说明见 [runtime/README.md](runtime/README.md)。
 
@@ -232,7 +237,7 @@ cmake --build build --target XServerRuntimePolicyTest -j"$(nproc)"
 | `XTrader/` | C++ 柜台交易接入 |
 | `XMarketCenter/` | C++ 行情接入与分发 |
 | `VnpyMonitor/` | vn.py Qt 交易工作台和网关事件映射 |
-| `HistoryDataService/` | 历史 K 线只读 API、Casbin 校验和 PostgreSQL 映射 |
+| `HistoryDataService/` | 历史 K 线只读 API、Casbin 校验和 ClickHouse 映射 |
 | `VnpyNative/` | 连接 XServer 的进程内 C++ Python 扩展 |
 | `QtAdmin/` | C++ Qt 权限管理端 |
 | `runtime/` | 本地准备、启动、停止脚本与示例配置 |
