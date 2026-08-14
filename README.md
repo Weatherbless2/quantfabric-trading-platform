@@ -50,6 +50,24 @@ flowchart LR
 完整职责、数据流和实现顺序见
 [目标架构文档](doc/architecture/TargetArchitecture.md)。
 
+## 运行界面
+
+### vn.py 交易工作台
+
+交易工作台展示全量证券列表、实时五档行情、ClickHouse 历史 K 线、资金持仓和限价下单入口。
+截图来自 ATP 测试柜台联调运行，不代表生产交易。
+
+![vn.py 交易工作台运行截图](docs/images/vnpy-trading-workbench.png)
+
+### SQL 业务字段后台
+
+BusinessAdminService 是基于 market、fundinfo、projectacct、fundacct、fundacctlink 和
+stkinfo 等 SQL 表业务含义建立的版本化控制面。下图为已发布版本 13 的证券主数据页：
+当前包含 5,205 只可用证券，并展示市场代码、证券代码、买入权限、最小价格单位和停牌状态；
+“一键切换买入并发布”会创建并审计新版本，不会直接改写当前版本。
+
+![BusinessAdmin 证券主数据运行截图](docs/images/business-admin-securities.png)
+
 ## 首次构建
 
 以下命令在 WSL Ubuntu 的仓库根目录执行：
