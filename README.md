@@ -92,6 +92,12 @@ cp runtime/config/HistoryData.env.example runtime/config/HistoryData.env
 export QF_HISTORY_URL=http://127.0.0.1:18081
 ~~~
 
+`QF_HISTORY_URL` 只对当前终端及其子进程生效，因此需要在同一个终端中再启动交易客户端：
+
+~~~bash
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
+~~~
+
 回测只读取历史数据，不会连接 ATP 或发送委托：
 
 ~~~bash

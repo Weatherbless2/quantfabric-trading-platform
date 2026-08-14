@@ -444,9 +444,10 @@ async function loadVersions() {
   const published = items.find(item => item.status === "PUBLISHED");
   const latestDraft = items.find(item => item.status === "DRAFT");
   state.publishedVersion = published ? published.version : null;
-  if (state.version == null || !items.some(item => item.version === state.version) ||
-      (state.versionStatus === "PUBLISHED" && latestDraft)) {
-    state.version = latestDraft?.version ?? published?.version ?? (items[0]?.version ?? null);
+  // The published configuration is what the trading core actually consumes.
+  // Do not silently switch an operator to an old draft just because one exists.
+  if (state.version == null || !items.some(item => item.version === state.version)) {
+    state.version = published?.version ?? latestDraft?.version ?? (items[0]?.version ?? null);
   }
   state.versionStatuses = Object.fromEntries(items.map(item => [item.version, item.status]));
   state.versionStatus = state.versionStatuses[state.version] || "";
