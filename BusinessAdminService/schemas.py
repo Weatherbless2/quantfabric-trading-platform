@@ -121,6 +121,28 @@ class SecurityMasterRequest(BaseModel):
     min_quantity: int = Field(default=0, ge=0)
 
 
+class SecuritySyncRequest(BaseModel):
+    """A complete, validated replacement for one draft version's stock scope."""
+
+    source: str = Field(default="", max_length=128)
+    securities: list[SecurityMasterRequest] = Field(min_length=1, max_length=20_000)
+
+
+class SecurityBuyAllowedPublishRequest(BaseModel):
+    """The single security change supported by the fast operational workflow."""
+
+    buy_allowed: bool
+    reason: str = Field(default="", max_length=256)
+
+
+class SecurityBuyAllowedPublishResponse(BaseModel):
+    version: int
+    source_version: int
+    market_code: str
+    symbol: str
+    buy_allowed: bool
+
+
 class FuturesProductRequest(BaseModel):
     market_code: str = Field(min_length=1, max_length=8, pattern=r"[^:]+")
     product_code: str = Field(min_length=1, max_length=16, pattern=r"[^:]+")

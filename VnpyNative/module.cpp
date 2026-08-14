@@ -131,7 +131,7 @@ PYBIND11_MODULE(quantfabric_native, module)
              py::arg("host") = "127.0.0.1", py::arg("port") = 8000,
              py::arg("user") = "admin", py::arg("password") = "123456",
              py::arg("session_id") = "",
-             py::arg("colo") = "LocalTest", py::arg("product") = "ATPTest",
+             py::arg("colo") = "ATPTest", py::arg("product") = "ATPTest",
              py::arg("account") = "610000071840")
         .def("start", &QuantFabricClient::Start)
         .def("reconnect", &QuantFabricClient::Reconnect)

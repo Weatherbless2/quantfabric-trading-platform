@@ -6,21 +6,21 @@
 `quantfabric_native` C++ 扩展直接连接 QuantFabric C++ 交易核心。该扩展不是
 独立桥接进程，Python 不会绕过 XServer、XRiskJudge 或 XTrader 直连柜台。
 
-> 当前仓库用于学习、开发和 ATP 模拟/测试柜台验证。未完成风控、账户授权和柜台
-> 配置审核前，禁止用于真实交易。
+> 当前仓库连接 ATP 测试柜台账户 `610000071840`。它不是生产账户；所有委托仍须经过
+> 权限、后台发布规则、XServer、XRiskJudge 和 ATP 柜台校验。
 
-## 当前进度（2026-08-13）
+## 当前进度（2026-08-14）
 
-当前处于“本地模拟交易闭环 + 第一版业务控制面”阶段，尚未进入真实柜台上线阶段。
+当前处于“ATP 测试柜台交易闭环 + 第一版业务控制面”阶段，尚未进入生产柜台上线阶段。
 
 | 阶段 | 状态 | 已交付内容 |
 |---|---|---|
-| 1. C++ 核心交易面 | 已完成 | `XServer -> XWatcher -> XRiskJudge -> XTrader`，共享内存行情链路与 TestTrader 模拟成交。 |
+| 1. C++ 核心交易面 | 已完成 | `XServer -> XWatcher -> XRiskJudge -> XTrader -> ATP SDK -> AGW`，共享内存行情、资金、持仓、委托和成交链路。 |
 | 2. 认证与权限控制面 | 已完成 | `AuthAdminService`、短会话、Casbin、菜单与账户动作授权、审计。 |
 | 3. vn.py 交易桌面 | 已完成 | `VnpyMonitor`、实时行情、ClickHouse 全量分钟 K 线、资金、持仓、委托、成交、下单和撤单入口。 |
 | 4. 业务后台管理 | 已完成第一版 | `BusinessAdminService` 的主数据、资产单元、账户关联、草稿、校验、发布、退役和审计。 |
 | 5. 控制面与交易面联调 | 已完成 | XServer 只加载 `PUBLISHED` 版本，支持原子热更新，并校验订阅、下单和撤单规则。 |
-| 6. 真实行情与真实柜台 | 未开始 | 历史 K 线已接服务器 ClickHouse；仍缺公司实时行情 SDK/字段映射、柜台测试环境验收、断线恢复和生产风控验收。 |
+| 6. 公司行情与生产柜台 | 进行中 | ATP 测试柜台已完成 SDK/AGW 登录及查询验收；仍缺公司实时行情 SDK/字段映射、断线恢复压测和生产风控验收。 |
 
 已确认：vn.py 通过进程内 `quantfabric_native` C++ 扩展使用 HPSocket + PackMessage
 连接 XServer；不存在桌面端 Python/C++ 桥接进程。Redis、Keycloak、复杂审批流、多租户，
@@ -42,7 +42,7 @@ flowchart LR
     Market --> Watcher["XWatcher"]
     XServer -->|下单、撤单| Watcher
     Watcher --> Risk["XRiskJudge"] --> Trader["XTrader"]
-    Trader <--> ATP["ATP 模拟/测试柜台"]
+    Trader <--> ATP["ATP SDK / AGW 测试柜台"]
     Trader -->|订单、成交、资金、持仓回报| Watcher
     Watcher --> XServer
 ```
@@ -94,7 +94,7 @@ QF_BUSINESS_POLICY_REFRESH_SECONDS=5
 EOF
 
 ./runtime/prepare.sh
-./runtime/start.sh test
+./runtime/start.sh
 ```
 
 `start.sh` 会按以下顺序启动：`AuthAdminService -> BusinessAdminService -> XServer ->
@@ -134,13 +134,16 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 
 ### 3. 验证后台发布会影响交易
 
-1. 在后台页面新建草稿版本，修改证券 `300007` 的“允许买入”，执行校验并发布。
+1. 在后台页面的“证券主数据”中选中 `300007`，点击“一键切换买入并发布”并确认。
 2. 等待不超过 `QF_BUSINESS_POLICY_REFRESH_SECONDS` 秒。
 3. 在交易客户端对 `300007.SZSE` 发起 100 股限价买单：关闭“允许买入”时会被 XServer
-   拒绝；重新启用并发布后，同样的订单会通过 `XRiskJudge -> TestTrader` 返回模拟成交。
+   拒绝；重新启用并发布后，同样的订单会通过 `XRiskJudge -> ATPTrader -> ATP SDK` 进入测试柜台。
 
-这证明真实使用链路为：`后台发布 -> BusinessAdminService -> XServer 热加载 -> vn.py 下单
--> 风控 -> TestTrader 回报`，而非前端本地模拟放行。
+这证明使用链路为：`后台发布 -> BusinessAdminService -> XServer 热加载 -> vn.py 下单
+-> 风控 -> ATPTrader -> ATP SDK -> AGW 回报`，而非前端本地放行。
+
+一键操作仍会在服务端复制当前已发布版本、只修改所选证券、校验并发布新版本，同时写入审计；
+它不会直接改写运行中的版本，也不会改变其他证券规则。
 
 ### 4. 可选页面和历史行情
 
@@ -170,9 +173,7 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 后台管理页面的“行情库状态”不直接连接 ClickHouse，而是通过 `HistoryDataService` 的内部
 汇总接口读取行数和时间范围，因此 ClickHouse 凭据只留在历史服务的本机配置中。
 
-`test` 是本地 A 股模拟链路：从证券库选择股票后，模拟行情经 XMarketCenter 按需生成；
-手工委托经过 XServer、XRiskJudge 与 TestTrader 后返回模拟成交、资金和持仓。它不连接
-pytdx、ATP 或真实柜台。权限后台的实际操作方式见
+标准运行入口连接 pytdx 实时行情和 ATP 测试柜台。权限后台的实际操作方式见
 [VnpyMonitor/README.md](VnpyMonitor/README.md)。
 
 停止服务：
@@ -192,15 +193,15 @@ pytdx、ATP 或真实柜台。权限后台的实际操作方式见
 `QF_BUSINESS_DATABASE_URL` 启动服务。开发环境默认使用运行目录中的 SQLite。
 
 只有 `PUBLISHED` 版本会被 C++ `XServer` 读取。业务策略开关由本机
-`runtime/config/BusinessAdmin.env` 统一管理；开启后 `runtime/start.sh test` 会先启动
+`runtime/config/BusinessAdmin.env` 统一管理；开启后 `runtime/start.sh` 会先启动
 `BusinessAdminService`，再启动 XServer。首次启用时按“运行与验收”章节写入开关并执行
 `./runtime/prepare.sh`。不要同时手工启动重复的 19080/19081 后台实例。
 
 ```bash
-./runtime/start.sh test
+./runtime/start.sh
 ```
 
-启用前必须在后台发布与 `TestTrader` 匹配的 `Test` 产品、账户关联和证券规则。验证策略
+启用前必须在后台发布与 ATPTrader 匹配的 `ATPTest / 610000071840` 产品、账户关联和证券规则。验证策略
 加载与回退：查看 `runtime/log/XServer_*.log` 中的版本激活/刷新告警，并运行：
 
 ```bash
@@ -214,12 +215,79 @@ cmake --build build --target XServerRuntimePolicyTest -j"$(nproc)"
 执行已发布版本的 `cancel_allowed`，不改变现有 `PackMessage` 协议。
 
 最近一次完整验证覆盖：后台 API 和 Casbin、ClickHouse 历史服务、vn.py 历史接口契约、
-C++ 运行时策略解析、完整启动、策略禁买拒单以及恢复策略后的 TestTrader 模拟成交。历史服务
+C++ 运行时策略解析、完整启动、策略禁买拒单以及 ATP SDK/AGW 登录与柜台查询。历史服务
 已用 `tdxdata.stkprice_1min` 的真实 `SZSE:000001` 数据验收 5 分钟 K 线。XServer 同时已
 加入空闲队列退避，避免没有业务消息时占满一个 CPU 核；兼容登录表的密码和失败登录密码不会
 写入日志。
 
 更完整的运行说明见 [runtime/README.md](runtime/README.md)。
+
+### CK 历史回测
+
+CK 历史数据用于独立回测，不连接 ATP，也不会发送真实委托。当前环境可直接运行：
+
+```bash
+./runtime/backtest.sh --symbol 300007 --exchange SZSE \
+  --start 2026-03-11 --end 2026-08-11 --interval 5 --fast 10 --slow 30
+```
+
+报告和成交明细写入 `runtime/data/backtest/`。CK 中有历史数据只表示该标的可以回测或展示；
+能否进入实时订阅、风控和 ATP 交易，仍由 BusinessAdmin 已发布证券规则决定。
+
+### 当前 A 股证券范围同步
+
+`PyTdxBridge` 会保存当前沪深 A 股主数据，CK 用于确认这些标的至少存在一分钟历史数据。以下命令
+创建一个可审计的新草稿版本，替换证券规则、校验并发布；不会发送 ATP 委托：
+
+```bash
+./runtime/sync-ck-security-master.sh
+```
+
+本次运行发布了 `5,205` 只 PyTdx 当前 A 股与 CK 数据的交集。同步后，XServer 在刷新周期内热加载
+新版本；PyTdx 行情仍是用户选择标的后按需订阅，不会在启动时轮询全市场。CK 中的历史退市代码和
+尚未出现历史数据的新上市代码不会被自动开放交易。
+
+### 全市场标的、实时行情与回测
+
+`300007.SZSE` 是交易工作台启动时的默认展示标的，并不是证券范围白名单。左侧“行情列表”加载
+PyTdx 证券主数据；在搜索框输入代码或名称并单击任意证券后，工作台会切换行情、K 线和下单面板，
+再向 C++ 原生会话发起该标的的实时订阅。这样可以覆盖发布版本内的证券，同时不会在启动时对五千多只
+标的进行无意义轮询。
+
+```mermaid
+flowchart LR
+    User["交易员选择 600000.SSE"] --> UI["vn.py 交易工作台"]
+    UI -->|"SubscribeRequest"| Native["quantfabric_native\n进程内 C++ 扩展"]
+    Native --> XServer["XServer\n检查已发布证券规则"]
+    XServer -->|"允许订阅"| Market["XWatcher / XMarketCenter"]
+    Market --> Tdx["PyTdxBridge\n动态加入轮询"]
+    Tdx --> Quote["实时五档行情回推"]
+    Quote --> UI
+
+    UI -->|"查询历史 K 线"| History["HistoryDataService"]
+    History --> CK["ClickHouse\ntdxdata.stkprice_1min"]
+    CK -->|"分钟 OHLCV"| UI
+    CK -->|"离线读取"| Backtest["BacktestService\n回测报告和成交明细"]
+```
+
+使用范围应区分如下：
+
+| 场景 | 范围 | 行为 |
+|---|---|---|
+| 左侧浏览与搜索 | 当前 PyTdx 证券主数据 | 可查看全部已同步证券。 |
+| 实时行情 | 已发布业务策略允许的证券 | 单击后按需订阅；不在启动时全量订阅。 |
+| 手工下单和撤单 | 已发布规则、账户权限和 ATP 测试柜台共同允许的证券 | 仍依次经过 XServer、风控和柜台校验。 |
+| CK 历史 K 线和回测 | `tdxdata.stkprice_1min` 中存在数据的证券 | 不连接 ATP，不会产生委托。 |
+
+例如，以下命令已验证 `600000.SSE` 可以从 CK 读取 5 分钟 K 线并完成独立回测：
+
+```bash
+./runtime/backtest.sh --symbol 600000 --exchange SSE \
+  --start 2026-03-11 --end 2026-08-11 --interval 5 --fast 10 --slow 30
+```
+
+报告写入 `runtime/data/backtest/`。同步命令会以“当前 PyTdx 主数据与 CK 历史数据交集”创建新
+发布版本；因此新增标的需要先在两个数据源中均可用，再运行同步命令，才会进入实时订阅和交易策略范围。
 
 ## 团队协作
 

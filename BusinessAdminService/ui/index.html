@@ -207,7 +207,7 @@ const MODULES = {
   projects: {title: "资产单元", path: "config/projects", columns: ["project_id", "name", "fund_id", "initial_balance", "project_type", "enabled"], fields: ["project_id", "name", "fund_id", "initial_balance", "project_type", "hedge_flags", "default_flag", "enabled", "remark"], keyFields: ["project_id"], group: "business"},
   accounts: {title: "资金账户", path: "config/accounts", columns: ["account_id", "broker_id", "broker_name", "account_type", "colo_id", "status"], fields: ["account_id", "broker_id", "broker_name", "account_type", "initial_balance", "colo_id", "open_date", "status"], keyFields: ["account_id"], group: "business"},
   "account-links": {title: "账户关联", path: "config/account-links", columns: ["project_id", "account_id", "account_type", "fund_id", "default_flag"], fields: ["project_id", "account_id", "account_type", "fund_id", "default_flag", "external_account_id"], keyFields: ["project_id", "account_id", "account_type"], group: "business"},
-  securities: {title: "证券主数据", path: "config/securities", columns: ["market_code", "symbol", "name", "security_type", "price_tick", "suspended"], fields: ["market_code", "symbol", "name", "security_type", "exchange_symbol", "suspended", "buy_allowed", "sell_allowed", "cancel_allowed", "price_tick", "buy_unit", "sell_unit", "max_quantity", "min_quantity"], keyFields: ["market_code", "symbol"], group: "business"},
+  securities: {title: "证券主数据", path: "config/securities", columns: ["market_code", "symbol", "name", "security_type", "buy_allowed", "price_tick", "suspended"], fields: ["market_code", "symbol", "name", "security_type", "exchange_symbol", "suspended", "buy_allowed", "sell_allowed", "cancel_allowed", "price_tick", "buy_unit", "sell_unit", "max_quantity", "min_quantity"], keyFields: ["market_code", "symbol"], group: "business"},
   "futures-products": {title: "期货品种", path: "config/futures-products", columns: ["market_code", "product_code", "name", "trading_unit", "margin_ratio"], fields: ["market_code", "product_code", "name", "trading_unit", "price_tick", "price_limit", "margin_ratio", "contract_month_rule", "last_trade_day_rule", "delivery_rule"], keyFields: ["market_code", "product_code"], group: "business"},
   "futures-contracts": {title: "期货合约", path: "config/futures-contracts", columns: ["market_code", "symbol", "product_code", "expiry_date", "multiplier"], fields: ["market_code", "symbol", "product_code", "exchange_symbol", "multiplier", "expiry_date", "end_trade_time", "main_level"], keyFields: ["market_code", "symbol"], group: "business"},
   snapshots: {title: "资产快照", path: "operations/asset-snapshots", readonly: true, columns: ["project_id", "fund_id", "as_of", "available_balance", "total_value", "risk_degree"], group: "readonly"},
@@ -579,6 +579,35 @@ function renderModuleToolbar(meta) {
     <button id="nextPage">下一页</button>
     ${meta.readonly ? "" : '<button id="newRowButton">新增</button><button id="editRowButton">修改</button><button class="bad" id="deleteRowButton">删除</button>'}
   `;
+  if (meta.path === "config/securities") {
+    const quickBuyToggle = document.createElement("button");
+    quickBuyToggle.className = "warn";
+    quickBuyToggle.textContent = "一键切换买入并发布";
+    quickBuyToggle.title = "复制当前发布版本，仅修改所选证券的买入权限，校验后立即发布";
+    bar.appendChild(quickBuyToggle);
+    quickBuyToggle.onclick = () => {
+      const security = state.selectedRow;
+      if (!security) return notify("请先选择一只证券");
+      const buyAllowed = !Boolean(security.buy_allowed);
+      const action = buyAllowed ? "启用" : "关闭";
+      if (!confirm("确认" + action + " " + security.symbol + " " + security.name + " 的买入权限并立即发布吗？")) {
+        return;
+      }
+      const path = "operations/securities/" + encodeURIComponent(security.market_code) + "/" +
+        encodeURIComponent(security.symbol) + "/buy-allowed:publish";
+      api(path, {method: "POST", body: JSON.stringify({buy_allowed: buyAllowed})})
+        .then(async result => {
+          state.version = result.version;
+          state.versionStatus = "PUBLISHED";
+          state.publishedVersion = result.version;
+          log("已发布版本 " + result.version + "：" + security.symbol + " 买入已" +
+              (buyAllowed ? "启用" : "关闭"));
+          await loadVersions();
+          await selectModule("securities");
+        })
+        .catch(error => notify(error.message));
+    };
+  }
   document.getElementById("refreshButton").onclick = async () => {
     state.version = Number(document.getElementById("versionInput").value || 0) || state.version;
     state.versionStatus = state.versionStatuses[state.version] || "";

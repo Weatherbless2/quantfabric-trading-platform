@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 from fastapi import FastAPI, Header, HTTPException, Query, status
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Select, create_engine, desc, func, inspect, select
+from sqlalchemy import Select, create_engine, delete, desc, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -52,7 +52,10 @@ from .schemas import (
     Page,
     ProductRequest,
     ProjectAccountRequest,
+    SecurityBuyAllowedPublishRequest,
+    SecurityBuyAllowedPublishResponse,
     SecurityMasterRequest,
+    SecuritySyncRequest,
     ValidationIssue,
     ValidationResponse,
     VersionCreate,
@@ -376,6 +379,38 @@ class BusinessService:
         version_row.status = "DRAFT"
         self.audit(db, version, actor, "business:delete", definition.name, key)
 
+    def replace_securities(self, db: Session, version: int,
+                           request: SecuritySyncRequest, actor: str) -> dict[str, int]:
+        """Atomically replace the stock rules of a draft configuration version.
+
+        A full source snapshot is safer than a sequence of thousands of HTTP
+        upserts: either every source symbol is published together, or the
+        previous draft contents remain intact after a validation failure.
+        """
+        version_row = self.ensure_draft(db, version)
+        definition = RESOURCES["securities"]
+        rows: list[SecurityMaster] = []
+        keys: set[tuple[str, str]] = set()
+        for payload in request.securities:
+            data = payload.model_dump()
+            key = (data["market_code"], data["symbol"])
+            if key in keys:
+                raise HTTPException(status_code=422,
+                                    detail=f"duplicate security in synchronization input: {key[0]}:{key[1]}")
+            keys.add(key)
+            rows.append(SecurityMaster(version_id=version_row.id, **data))
+        previous = db.scalar(select(func.count()).select_from(SecurityMaster).where(
+            SecurityMaster.version_id == version_row.id)) or 0
+        db.execute(delete(SecurityMaster).where(SecurityMaster.version_id == version_row.id))
+        db.add_all(rows)
+        version_row.status = "DRAFT"
+        self.audit(db, version, actor, "business:sync", definition.name, "*", {
+            "source": request.source,
+            "replaced": int(previous),
+            "inserted": len(rows),
+        })
+        return {"replaced": int(previous), "inserted": len(rows)}
+
     def validate_version(self, db: Session, version: int, actor: str | None = None) -> ValidationResponse:
         item = self.get_version(db, version)
         if item.status not in {"DRAFT", "VALIDATED"}:
@@ -388,6 +423,54 @@ class BusinessService:
             self.audit(db, version, actor, "business:validate", "config-version", str(version),
                        {"issue_count": len(issues)})
         return ValidationResponse(version=version, valid=not any(issue.level == "ERROR" for issue in issues), issues=issues)
+
+    def publish_security_buy_allowed(self, db: Session, market_code: str, symbol: str,
+                                     request: SecurityBuyAllowedPublishRequest,
+                                     actor: str) -> SecurityBuyAllowedPublishResponse:
+        """Create, validate and publish one auditable buy-permission change."""
+        source = self.current_version(db)
+        key = f"{market_code}:{symbol}"
+        action = "启用" if request.buy_allowed else "关闭"
+        draft = self.create_version(db, VersionCreate(
+            description=f"快捷{action}买入 {key}",
+            source_version=source.version,
+        ), actor)
+        security = db.scalar(select(SecurityMaster).where(
+            SecurityMaster.version_id == draft.id,
+            SecurityMaster.market_code == market_code,
+            SecurityMaster.symbol == symbol,
+        ))
+        if security is None:
+            raise HTTPException(status_code=404, detail="security is unavailable in published configuration")
+        previous = security.buy_allowed
+        security.buy_allowed = request.buy_allowed
+        self.audit(db, draft.version, actor, "business:quick-publish", "securities", key, {
+            "source_version": source.version,
+            "buy_allowed_before": previous,
+            "buy_allowed_after": request.buy_allowed,
+            "reason": request.reason,
+        })
+        validation = self.validate_version(db, draft.version, actor)
+        if not validation.valid:
+            raise HTTPException(status_code=409, detail={
+                "message": "configuration validation failed",
+                "issues": [issue.model_dump() for issue in validation.issues],
+            })
+        source.status = "RETIRED"
+        draft.status = "PUBLISHED"
+        draft.published_by = actor
+        draft.published_at = datetime.now().astimezone()
+        self.audit(db, draft.version, actor, "business:publish", "config-version", str(draft.version), {
+            "mode": "quick-security-buy-allowed",
+            "source_version": source.version,
+        })
+        return SecurityBuyAllowedPublishResponse(
+            version=draft.version,
+            source_version=source.version,
+            market_code=market_code,
+            symbol=symbol,
+            buy_allowed=security.buy_allowed,
+        )
 
     def validation_issues(self, db: Session, version: ConfigVersion) -> list[ValidationIssue]:
         version_id = version.id
@@ -546,6 +629,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             service.audit(db, version, actor, "business:publish", "config-version", str(version))
             return _version_response(item)
 
+    @app.post("/v1/operations/securities/{market_code}/{symbol}/buy-allowed:publish",
+              response_model=SecurityBuyAllowedPublishResponse)
+    def publish_security_buy_allowed(
+            market_code: str, symbol: str, request: SecurityBuyAllowedPublishRequest,
+            session_id: str = Header(alias="X-QF-Session-ID"),
+    ) -> SecurityBuyAllowedPublishResponse:
+        actor = require(session_id, "business:write", "business/securities")
+        require(session_id, "business:publish")
+        with service.session_factory.begin() as db:
+            return service.publish_security_buy_allowed(db, market_code, symbol, request, actor)
+
     @app.get("/v1/config/{resource}", response_model=Page)
     def list_resource(resource: str, version: int = Query(ge=1), query: str = "",
                       offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200),
@@ -579,6 +673,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown configuration resource")
         with service.session_factory.begin() as db:
             service.delete_resource(db, definition, version, key, actor)
+
+    @app.put("/v1/config/versions/{version}/securities:sync")
+    def sync_securities(version: int, request: SecuritySyncRequest,
+                        session_id: str = Header(alias="X-QF-Session-ID")) -> dict[str, int]:
+        actor = require(session_id, "business:write", "business/securities")
+        with service.session_factory.begin() as db:
+            return service.replace_securities(db, version, request, actor)
 
     @app.get("/v1/operations/asset-snapshots", response_model=list[AssetSnapshotResponse])
     def list_asset_snapshots(project_id: int | None = Query(default=None, ge=1),

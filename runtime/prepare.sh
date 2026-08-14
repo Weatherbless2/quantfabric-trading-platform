@@ -43,7 +43,7 @@ if [[ ! -f "${business_env}" ]]; then
 QF_BUSINESS_DATABASE_URL=sqlite:///${repo_root}/runtime/data/business_admin.db
 QF_BUSINESS_AUTH_URL=http://127.0.0.1:18080
 QF_BUSINESS_DOMAIN=desk:cn_equity
-QF_BUSINESS_POLICY_ENABLED=false
+QF_BUSINESS_POLICY_ENABLED=true
 QF_BUSINESS_POLICY_URL=http://127.0.0.1:19080
 QF_BUSINESS_POLICY_TIMEOUT_MS=1000
 QF_BUSINESS_POLICY_REFRESH_SECONDS=60
@@ -60,21 +60,19 @@ ensure_business_setting() {
         printf '%s=%s\n' "${key}" "${value}" >>"${business_env}"
     fi
 }
-ensure_business_setting QF_BUSINESS_POLICY_ENABLED false
+ensure_business_setting QF_BUSINESS_POLICY_ENABLED true
 ensure_business_setting QF_BUSINESS_POLICY_URL http://127.0.0.1:19080
 ensure_business_setting QF_BUSINESS_POLICY_TIMEOUT_MS 1000
 ensure_business_setting QF_BUSINESS_POLICY_REFRESH_SECONDS 60
 
-# The local business environment is the single source of truth for whether
-# XServer must load published configuration before accepting business traffic.
+# Load the control-plane endpoint settings before generating XServer.yml.
 set -a
 source "${business_env}"
 set +a
 
 # runtime/config is local state. Keep the checked-in XServer sample as the
-# source of truth, then make its paths and control-plane switch explicit for
-# the local process. The business environment owns this switch so start.sh
-# starts the control plane before XServer whenever admission is enabled.
+# source of truth, then make its paths and mandatory control-plane admission
+# explicit for the local process.
 cat >"${config_dir}/XServer.yml" <<EOF
 XServerConfig:
   ServerIP: 127.0.0.1
@@ -92,7 +90,7 @@ XServerConfig:
     TimeoutMs: 1000
     Domain: desk:cn_equity
   BusinessPolicy:
-    Enabled: ${QF_BUSINESS_POLICY_ENABLED:-false}
+    Enabled: true
     ServiceURL: ${QF_BUSINESS_POLICY_URL:-http://127.0.0.1:19080}
     TimeoutMs: ${QF_BUSINESS_POLICY_TIMEOUT_MS:-1000}
     RefreshSeconds: ${QF_BUSINESS_POLICY_REFRESH_SECONDS:-60}

@@ -45,10 +45,9 @@ contains the local development authorization secret and is deliberately ignored
 by Git.
 
 It also creates the local BusinessAdmin SQLite configuration and rewrites
-`runtime/config/XServer.yml`. Business policy admission is disabled by default;
-set `QF_BUSINESS_POLICY_ENABLED=true` before `prepare.sh` and `start.sh` only
-after a valid published version exists. Use `./runtime/start-business-admin.sh`
-to run the Python control plane separately.
+`runtime/config/XServer.yml`. Business policy admission is mandatory for the
+standard ATP runtime. `start.sh` starts the control plane and publishes the
+checked-in ATP policy only when the database has no published version.
 
 ## Build
 
@@ -62,18 +61,32 @@ cmake --build build --target \
 
 ## Start and Stop
 
-Start the safe local test chain first:
+Start the standard ATP test-counter chain. Orders and cancellations are enabled:
 
 ```bash
-./runtime/start.sh test
+./runtime/start.sh
 ```
 
-The script starts `AuthAdmin`, `XServer`, `XWatcher`, `XRiskJudge`, `XTrader`,
-`XMarketCenter`, and `XQuant`. `AuthAdmin` listens on `127.0.0.1:18080`.
+The script starts `AuthAdmin`, `BusinessAdmin`, `ATPBridge`, `PyTdxBridge`,
+`XServer`, `XWatcher`, `XRiskJudge`, `XTrader`, `XMarketCenter`, and `XQuant`.
+`XTrader` uses account `610000071840`, product `ATPTest`, and `ATPTrader`.
+
+## 同步当前证券范围
+
+在 `PyTdxBridge` 已生成 `runtime/data/security_master.json` 且历史服务的 ClickHouse 配置可用时，运行：
+
+```bash
+./runtime/sync-ck-security-master.sh
+```
+
+该命令将当前 PyTdx 沪深 A 股与 CK 分钟数据交集写入新的 BusinessAdmin 草稿版本，校验后发布。
+它只更新版本化证券规则，不发送订单，也不重启 ATP、行情或 C++ 风控服务。XServer 随后热加载新版本。
+`AuthAdmin` listens on `127.0.0.1:18080`.
+When a new BusinessAdmin database has no published version, the startup script
+publishes `runtime/config/ATPBusinessPolicy.json` through the versioned API. It
+never replaces an existing published version.
 The first `XMarketCenter` start may take up to two minutes while its 256 shared
-memory publishing channels are initialized. In `test` mode it publishes local
-A-share simulation data and `TestTrader` returns simulated fills; neither
-pytdx nor ATP is contacted.
+memory publishing channels are initialized.
 
 When business policy admission is enabled, XServer loads
 `GET /v1/internal/config/published/runtime-policy` with the shared internal key.
@@ -83,7 +96,7 @@ subscriptions, orders and cancellations. The order reference cache built from
 `OrderStatus` reports supplies the security context needed to enforce
 `cancel_allowed` without changing the existing PackMessage layout.
 
-Start the desktop programs from separate terminals after the test chain is
+Start the desktop programs from separate terminals after the ATP chain is
 ready:
 
 ```bash
@@ -141,8 +154,9 @@ can validate the new short session.
 The planned implementation order is documented in
 `doc/architecture/TargetArchitecture.md`.
 
-## Safety Boundary
+## Runtime Boundary
 
-Do not use `real-trade` until the broker configuration, account grant, and
-order-risk tests have been reviewed. Local vendor SDK files, runtime databases,
-logs, generated secrets, and real account data must not be committed.
+This entrypoint connects an ATP test-counter account, not a production account.
+Every order still passes XServer authorization, the published business policy,
+XRiskJudge, and ATP validation. Local SDK files, databases, logs, generated
+secrets, and account credentials must not be committed.

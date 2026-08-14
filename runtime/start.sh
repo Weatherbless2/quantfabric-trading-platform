@@ -6,16 +6,16 @@ runtime_dir="${repo_root}/runtime"
 config_dir="${runtime_dir}/config"
 log_dir="${runtime_dir}/log"
 pid_dir="${runtime_dir}/pids"
-mode=${1:-test}
+mode=${1:-real-trade}
 debug_args=()
 if [[ "${QF_DEBUG_LOG:-0}" == "1" ]]; then
     debug_args=(-d)
 fi
 
 case "${mode}" in
-    test|real-readonly|real-trade) ;;
+    real-trade) ;;
     *)
-        printf 'usage: %s [test|real-readonly|real-trade]\n' "$0" >&2
+        printf 'usage: %s [real-trade]\n' "$0" >&2
         exit 1
         ;;
 esac
@@ -125,22 +125,17 @@ start_component AuthAdmin \
     env "PYTHONPATH=${repo_root}" "${repo_root}/.auth-venv/bin/python" -m uvicorn \
     AuthAdminService.app:app --host 127.0.0.1 --port 18080
 wait_for_http AuthAdmin "http://127.0.0.1:18080/healthz"
-if [[ "${QF_BUSINESS_POLICY_ENABLED:-false}" == "true" ]]; then
-    "${runtime_dir}/start-business-admin.sh"
-    wait_for_http BusinessAdmin "http://127.0.0.1:19080/healthz"
-    components=(BusinessAdmin "${components[@]}")
-fi
-if [[ "${mode}" != "test" ]]; then
-    atp_bridge_args=()
-    if [[ "${mode}" == "real-trade" ]]; then
-        atp_bridge_args+=(--enable-orders)
-    fi
-    start_component ATPBridge "${runtime_dir}/atp-bridge.sh" "${atp_bridge_args[@]}"
-    wait_for_log ATPBridge '"event": "bridge_listening"'
-    start_component PyTdxBridge "${runtime_dir}/pytdx-bridge.sh"
-    wait_for_log PyTdxBridge '"event": "bridge_listening"'
-    components=(ATPBridge PyTdxBridge "${components[@]}")
-fi
+"${runtime_dir}/start-business-admin.sh"
+wait_for_http BusinessAdmin "http://127.0.0.1:19080/healthz"
+env "PYTHONPATH=${repo_root}" "${repo_root}/.auth-venv/bin/python" \
+    "${runtime_dir}/bootstrap-atp-policy.py"
+components=(BusinessAdmin "${components[@]}")
+start_component ATPBridge "${runtime_dir}/atp-bridge.sh" --enable-orders
+wait_for_log ATPBridge '"event": "bridge_listening"'
+wait_for_log ATPBridge '"orders_enabled": true'
+start_component PyTdxBridge "${runtime_dir}/pytdx-bridge.sh"
+wait_for_log PyTdxBridge '"event": "bridge_listening"'
+components=(ATPBridge PyTdxBridge "${components[@]}")
 
 start_component XServer \
     "${repo_root}/build/XServer_0.9.0" "${debug_args[@]}" -f "${config_dir}/XServer.yml"
@@ -149,28 +144,21 @@ start_component XWatcher \
 start_component XRiskJudge \
     "${repo_root}/build/XRiskJudge_0.9.3" "${debug_args[@]}" -f "${config_dir}/XRiskJudge.yml"
 wait_for_log XRiskJudge "SHMServer Init RiskServer done"
-if [[ "${mode}" == "test" ]]; then
-    trader_account=188795
-    trader_config="${config_dir}/XTrader.yml"
-    trader_plugin="${repo_root}/build/libTestTrader_0.4.0.so"
-    market_config="${config_dir}/XMarketCenter.yml"
-    market_plugin="${repo_root}/build/libTestMarket_0.2.0.so"
-    quant_config="${config_dir}/XQuant.yml"
-    trader_env=(env)
-else
-    trader_account=610000071840
-    trader_config="${config_dir}/XTraderATP.yml"
-    trader_plugin="${repo_root}/build/libATPTrader_0.1.0.so"
-    market_config="${config_dir}/XMarketCenterPyTdx.yml"
-    market_plugin="${repo_root}/build/libPyTdxMarket_0.1.0.so"
-    quant_config="${config_dir}/XQuantStock.yml"
-    trader_env=(env "QF_ATP_ENABLE_ORDERS=$([[ "${mode}" == "real-trade" ]] && printf 1 || printf 0)")
-fi
+trader_account=610000071840
+trader_config="${config_dir}/XTraderATP.yml"
+trader_plugin="${repo_root}/build/libATPTrader_0.1.0.so"
+market_config="${config_dir}/XMarketCenterPyTdx.yml"
+market_plugin="${repo_root}/build/libPyTdxMarket_0.1.0.so"
+quant_config="${config_dir}/XQuantStock.yml"
+trader_env=(env QF_ATP_ENABLE_ORDERS=1)
 
 start_component XTrader \
     "${trader_env[@]}" "${repo_root}/build/XTrader_0.9.3" "${debug_args[@]}" -a "${trader_account}" \
     -f "${trader_config}" -L "${trader_plugin}"
 wait_for_log XTrader "SHMServer Init OrderServer${trader_account} done"
+wait_for_log ATPBridge '"type": "fund"'
+wait_for_log ATPBridge '"name": "trade"'
+wait_for_log ATPBridge '"name": "order"'
 start_component XMarketCenter \
     "${repo_root}/build/XMarketCenter_0.9.3" "${debug_args[@]}" \
     -f "${market_config}" -L "${market_plugin}"

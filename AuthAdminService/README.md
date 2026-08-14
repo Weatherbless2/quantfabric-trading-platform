@@ -50,7 +50,7 @@ ignored by Git.
 python3 -m venv .auth-venv
 .auth-venv/bin/python -m pip install -r AuthAdminService/requirements.txt
 ./runtime/prepare.sh
-./runtime/start.sh test
+./runtime/start.sh
 ```
 
 The local administrator is `admin` / `123456`. It is for local development

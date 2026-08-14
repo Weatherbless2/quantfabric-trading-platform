@@ -57,6 +57,24 @@
       "ticker": "300750",
       "exchange": "SZSE",
       "name": "宁德时代"
+    },
+    {
+      "market": 1,
+      "ticker": "600584",
+      "exchange": "SSE",
+      "name": "长电科技"
+    },
+    {
+      "market": 1,
+      "ticker": "688116",
+      "exchange": "SSE",
+      "name": "天奈科技"
+    },
+    {
+      "market": 0,
+      "ticker": "002120",
+      "exchange": "SZSE",
+      "name": "韵达股份"
     }
   ]
 }

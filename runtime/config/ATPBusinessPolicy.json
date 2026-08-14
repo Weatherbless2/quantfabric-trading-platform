@@ -1,0 +1,33 @@
+{
+  "description": "ATP测试柜台标准运行配置",
+  "markets": [
+    {"market_code": "S", "exchange_code": "SSE", "name": "沪市", "full_name": "上海证券交易所", "enabled": true, "remark": "ATP测试柜台"},
+    {"market_code": "Z", "exchange_code": "SZSE", "name": "深市", "full_name": "深圳证券交易所", "enabled": true, "remark": "ATP测试柜台"}
+  ],
+  "colocations": [
+    {"colo_id": 1001, "name": "ATP测试机房", "full_name": "ATP AGW测试机房", "enabled": true}
+  ],
+  "products": [
+    {"fund_id": 1, "fund_code": "ATPTest", "name": "ATP测试产品", "full_name": "610000071840 ATP测试柜台", "allowed_security_types": "stock", "allowed_directions": "buy,sell", "allowed_markets": "S,Z", "fund_type": "0", "valuation_type": "1", "bond_risk_value": "1", "long_stop_value": "1", "status": "1"}
+  ],
+  "projects": [
+    {"project_id": 1, "name": "ATP测试资产单元", "fund_id": 1, "initial_balance": "0", "project_type": "0", "hedge_flags": "0", "default_flag": true, "enabled": true, "remark": "ATP测试柜台"}
+  ],
+  "accounts": [
+    {"account_id": "610000071840", "broker_id": "6100", "broker_name": "国信证券ATP", "account_type": "0", "initial_balance": "0", "colo_id": 1001, "open_date": "20260813", "status": "1"}
+  ],
+  "account-links": [
+    {"project_id": 1, "account_id": "610000071840", "account_type": "0", "default_flag": true, "external_account_id": "610000071840", "fund_id": 1}
+  ],
+  "securities": [
+    {"market_code": "S", "symbol": "600519", "name": "贵州茅台", "security_type": "stock", "exchange_symbol": "600519", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "S", "symbol": "600584", "name": "长电科技", "security_type": "stock", "exchange_symbol": "600584", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "S", "symbol": "601318", "name": "中国平安", "security_type": "stock", "exchange_symbol": "601318", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "S", "symbol": "688116", "name": "天奈科技", "security_type": "stock", "exchange_symbol": "688116", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "Z", "symbol": "000001", "name": "平安银行", "security_type": "stock", "exchange_symbol": "000001", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "Z", "symbol": "000858", "name": "五粮液", "security_type": "stock", "exchange_symbol": "000858", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "Z", "symbol": "002120", "name": "韵达股份", "security_type": "stock", "exchange_symbol": "002120", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "Z", "symbol": "300007", "name": "汉威科技", "security_type": "stock", "exchange_symbol": "300007", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0},
+    {"market_code": "Z", "symbol": "300750", "name": "宁德时代", "security_type": "stock", "exchange_symbol": "300750", "suspended": false, "buy_allowed": true, "sell_allowed": true, "cancel_allowed": true, "price_tick": "0.01", "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0}
+  ]
+}

@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from atp_readonly import (
+from atp_session import (
     ATP_LIB_DIR,
     ROOT_DIR,
     SUCCESS_CODE,

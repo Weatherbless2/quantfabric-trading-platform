@@ -122,6 +122,11 @@ class NativeTradingTest(unittest.TestCase):
         self.gateway.orders_enabled = True
         self.gateway.received_quotes.add("300007.SZSE")
 
+    def test_gateway_defaults_use_atp_counter(self) -> None:
+        self.assertEqual(self.gateway.default_setting["交易机房"], "ATPTest")
+        self.assertEqual(self.gateway.default_setting["交易产品"], "ATPTest")
+        self.assertEqual(self.gateway.default_setting["资金账号"], "610000071840")
+
     @staticmethod
     def order_request(volume: int = 100) -> OrderRequest:
         return OrderRequest(
@@ -169,6 +174,20 @@ class NativeTradingTest(unittest.TestCase):
         })
         self.gateway.cancel_order(request)
         self.assertEqual(self.native_client.cancels, [("ATP-1024", "SZSE")])
+
+    def test_xtrader_initialization_status_is_not_published_as_order(self) -> None:
+        orders = []
+        self.gateway.on_order = orders.append
+        self.gateway._on_trade_message({
+            "type": "order_status",
+            "ticker": "300007",
+            "exchange": "SZSE",
+            "order_token": 0,
+            "order_ref": "",
+            "volume": 0,
+            "status": "rejected",
+        })
+        self.assertEqual(orders, [])
 
     def test_session_event_requires_login_before_orders_are_enabled(self) -> None:
         events = []
