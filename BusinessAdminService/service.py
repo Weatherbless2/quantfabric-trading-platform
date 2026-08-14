@@ -52,6 +52,8 @@ from .schemas import (
     Page,
     ProductRequest,
     ProjectAccountRequest,
+    SecurityBuyAllowedPublishRequest,
+    SecurityBuyAllowedPublishResponse,
     SecurityMasterRequest,
     SecuritySyncRequest,
     ValidationIssue,
@@ -422,6 +424,54 @@ class BusinessService:
                        {"issue_count": len(issues)})
         return ValidationResponse(version=version, valid=not any(issue.level == "ERROR" for issue in issues), issues=issues)
 
+    def publish_security_buy_allowed(self, db: Session, market_code: str, symbol: str,
+                                     request: SecurityBuyAllowedPublishRequest,
+                                     actor: str) -> SecurityBuyAllowedPublishResponse:
+        """Create, validate and publish one auditable buy-permission change."""
+        source = self.current_version(db)
+        key = f"{market_code}:{symbol}"
+        action = "启用" if request.buy_allowed else "关闭"
+        draft = self.create_version(db, VersionCreate(
+            description=f"快捷{action}买入 {key}",
+            source_version=source.version,
+        ), actor)
+        security = db.scalar(select(SecurityMaster).where(
+            SecurityMaster.version_id == draft.id,
+            SecurityMaster.market_code == market_code,
+            SecurityMaster.symbol == symbol,
+        ))
+        if security is None:
+            raise HTTPException(status_code=404, detail="security is unavailable in published configuration")
+        previous = security.buy_allowed
+        security.buy_allowed = request.buy_allowed
+        self.audit(db, draft.version, actor, "business:quick-publish", "securities", key, {
+            "source_version": source.version,
+            "buy_allowed_before": previous,
+            "buy_allowed_after": request.buy_allowed,
+            "reason": request.reason,
+        })
+        validation = self.validate_version(db, draft.version, actor)
+        if not validation.valid:
+            raise HTTPException(status_code=409, detail={
+                "message": "configuration validation failed",
+                "issues": [issue.model_dump() for issue in validation.issues],
+            })
+        source.status = "RETIRED"
+        draft.status = "PUBLISHED"
+        draft.published_by = actor
+        draft.published_at = datetime.now().astimezone()
+        self.audit(db, draft.version, actor, "business:publish", "config-version", str(draft.version), {
+            "mode": "quick-security-buy-allowed",
+            "source_version": source.version,
+        })
+        return SecurityBuyAllowedPublishResponse(
+            version=draft.version,
+            source_version=source.version,
+            market_code=market_code,
+            symbol=symbol,
+            buy_allowed=security.buy_allowed,
+        )
+
     def validation_issues(self, db: Session, version: ConfigVersion) -> list[ValidationIssue]:
         version_id = version.id
         issues: list[ValidationIssue] = []
@@ -578,6 +628,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             item.published_at = datetime.now().astimezone()
             service.audit(db, version, actor, "business:publish", "config-version", str(version))
             return _version_response(item)
+
+    @app.post("/v1/operations/securities/{market_code}/{symbol}/buy-allowed:publish",
+              response_model=SecurityBuyAllowedPublishResponse)
+    def publish_security_buy_allowed(
+            market_code: str, symbol: str, request: SecurityBuyAllowedPublishRequest,
+            session_id: str = Header(alias="X-QF-Session-ID"),
+    ) -> SecurityBuyAllowedPublishResponse:
+        actor = require(session_id, "business:write", "business/securities")
+        require(session_id, "business:publish")
+        with service.session_factory.begin() as db:
+            return service.publish_security_buy_allowed(db, market_code, symbol, request, actor)
 
     @app.get("/v1/config/{resource}", response_model=Page)
     def list_resource(resource: str, version: int = Query(ge=1), query: str = "",

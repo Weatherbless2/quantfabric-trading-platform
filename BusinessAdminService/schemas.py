@@ -128,6 +128,21 @@ class SecuritySyncRequest(BaseModel):
     securities: list[SecurityMasterRequest] = Field(min_length=1, max_length=20_000)
 
 
+class SecurityBuyAllowedPublishRequest(BaseModel):
+    """The single security change supported by the fast operational workflow."""
+
+    buy_allowed: bool
+    reason: str = Field(default="", max_length=256)
+
+
+class SecurityBuyAllowedPublishResponse(BaseModel):
+    version: int
+    source_version: int
+    market_code: str
+    symbol: str
+    buy_allowed: bool
+
+
 class FuturesProductRequest(BaseModel):
     market_code: str = Field(min_length=1, max_length=8, pattern=r"[^:]+")
     product_code: str = Field(min_length=1, max_length=16, pattern=r"[^:]+")

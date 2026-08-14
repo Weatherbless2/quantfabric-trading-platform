@@ -143,6 +143,46 @@ class BusinessControlPlaneTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("validated", response.json()["detail"])
 
+    def test_quick_buy_permission_change_copies_validates_and_publishes(self) -> None:
+        session = self.login()
+        headers = {"X-QF-Session-ID": session["session_id"]}
+        security = {
+            "market_code": "Z", "symbol": "300007", "name": "汉威科技", "security_type": "stock",
+            "exchange_symbol": "300007", "suspended": False, "buy_allowed": True,
+            "sell_allowed": True, "cancel_allowed": True, "price_tick": "0.01",
+            "buy_unit": 100, "sell_unit": 100, "max_quantity": 0, "min_quantity": 0,
+        }
+        with patch("BusinessAdminService.service.urlopen", side_effect=self.auth_urlopen):
+            source = self.client.post("/v1/config/versions", headers=headers,
+                                      json={"description": "published base"}).json()["version"]
+            self.client.put(f"/v1/config/markets/Z?version={source}", headers=headers, json={
+                "market_code": "Z", "exchange_code": "SZSE", "name": "深市",
+                "full_name": "深圳证券交易所", "enabled": True, "remark": "",
+            })
+            self.client.put(f"/v1/config/securities/Z:300007?version={source}", headers=headers, json=security)
+            self.assertTrue(self.client.get(f"/v1/config/versions/{source}/validate", headers=headers).json()["valid"])
+            self.assertEqual(
+                self.client.post(f"/v1/config/versions/{source}/publish", headers=headers).status_code, 200
+            )
+            response = self.client.post(
+                "/v1/operations/securities/Z/300007/buy-allowed:publish",
+                headers=headers,
+                json={"buy_allowed": False, "reason": "test"},
+            )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertEqual(result["source_version"], source)
+            self.assertFalse(result["buy_allowed"])
+            current = self.client.get(
+                f"/v1/config/securities?version={result['version']}", headers=headers
+            ).json()["items"]
+            self.assertEqual(len(current), 1)
+            self.assertFalse(current[0]["buy_allowed"])
+            versions = self.client.get("/v1/config/versions", headers=headers).json()
+        statuses = {item["version"]: item["status"] for item in versions}
+        self.assertEqual(statuses[source], "RETIRED")
+        self.assertEqual(statuses[result["version"]], "PUBLISHED")
+
     def test_draft_security_sync_replaces_scope_atomically(self) -> None:
         session = self.login()
         headers = {"X-QF-Session-ID": session["session_id"]}

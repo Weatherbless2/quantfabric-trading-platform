@@ -134,13 +134,16 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 
 ### 3. 验证后台发布会影响交易
 
-1. 在后台页面新建草稿版本，修改证券 `300007` 的“允许买入”，执行校验并发布。
+1. 在后台页面的“证券主数据”中选中 `300007`，点击“一键切换买入并发布”并确认。
 2. 等待不超过 `QF_BUSINESS_POLICY_REFRESH_SECONDS` 秒。
 3. 在交易客户端对 `300007.SZSE` 发起 100 股限价买单：关闭“允许买入”时会被 XServer
    拒绝；重新启用并发布后，同样的订单会通过 `XRiskJudge -> ATPTrader -> ATP SDK` 进入测试柜台。
 
 这证明使用链路为：`后台发布 -> BusinessAdminService -> XServer 热加载 -> vn.py 下单
 -> 风控 -> ATPTrader -> ATP SDK -> AGW 回报`，而非前端本地放行。
+
+一键操作仍会在服务端复制当前已发布版本、只修改所选证券、校验并发布新版本，同时写入审计；
+它不会直接改写运行中的版本，也不会改变其他证券规则。
 
 ### 4. 可选页面和历史行情
 
