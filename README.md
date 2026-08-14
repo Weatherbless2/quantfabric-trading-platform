@@ -9,7 +9,7 @@
 > 当前仓库连接 ATP 测试柜台账户 `610000071840`。它不是生产账户；所有委托仍须经过
 > 权限、后台发布规则、XServer、XRiskJudge 和 ATP 柜台校验。
 
-## 当前进度（2026-08-13）
+## 当前进度（2026-08-14）
 
 当前处于“ATP 测试柜台交易闭环 + 第一版业务控制面”阶段，尚未进入生产柜台上线阶段。
 
@@ -243,6 +243,48 @@ CK 历史数据用于独立回测，不连接 ATP，也不会发送真实委托�
 本次运行发布了 `5,205` 只 PyTdx 当前 A 股与 CK 数据的交集。同步后，XServer 在刷新周期内热加载
 新版本；PyTdx 行情仍是用户选择标的后按需订阅，不会在启动时轮询全市场。CK 中的历史退市代码和
 尚未出现历史数据的新上市代码不会被自动开放交易。
+
+### 全市场标的、实时行情与回测
+
+`300007.SZSE` 是交易工作台启动时的默认展示标的，并不是证券范围白名单。左侧“行情列表”加载
+PyTdx 证券主数据；在搜索框输入代码或名称并单击任意证券后，工作台会切换行情、K 线和下单面板，
+再向 C++ 原生会话发起该标的的实时订阅。这样可以覆盖发布版本内的证券，同时不会在启动时对五千多只
+标的进行无意义轮询。
+
+```mermaid
+flowchart LR
+    User["交易员选择 600000.SSE"] --> UI["vn.py 交易工作台"]
+    UI -->|"SubscribeRequest"| Native["quantfabric_native\n进程内 C++ 扩展"]
+    Native --> XServer["XServer\n检查已发布证券规则"]
+    XServer -->|"允许订阅"| Market["XWatcher / XMarketCenter"]
+    Market --> Tdx["PyTdxBridge\n动态加入轮询"]
+    Tdx --> Quote["实时五档行情回推"]
+    Quote --> UI
+
+    UI -->|"查询历史 K 线"| History["HistoryDataService"]
+    History --> CK["ClickHouse\ntdxdata.stkprice_1min"]
+    CK -->|"分钟 OHLCV"| UI
+    CK -->|"离线读取"| Backtest["BacktestService\n回测报告和成交明细"]
+```
+
+使用范围应区分如下：
+
+| 场景 | 范围 | 行为 |
+|---|---|---|
+| 左侧浏览与搜索 | 当前 PyTdx 证券主数据 | 可查看全部已同步证券。 |
+| 实时行情 | 已发布业务策略允许的证券 | 单击后按需订阅；不在启动时全量订阅。 |
+| 手工下单和撤单 | 已发布规则、账户权限和 ATP 测试柜台共同允许的证券 | 仍依次经过 XServer、风控和柜台校验。 |
+| CK 历史 K 线和回测 | `tdxdata.stkprice_1min` 中存在数据的证券 | 不连接 ATP，不会产生委托。 |
+
+例如，以下命令已验证 `600000.SSE` 可以从 CK 读取 5 分钟 K 线并完成独立回测：
+
+```bash
+./runtime/backtest.sh --symbol 600000 --exchange SSE \
+  --start 2026-03-11 --end 2026-08-11 --interval 5 --fast 10 --slow 30
+```
+
+报告写入 `runtime/data/backtest/`。同步命令会以“当前 PyTdx 主数据与 CK 历史数据交集”创建新
+发布版本；因此新增标的需要先在两个数据源中均可用，再运行同步命令，才会进入实时订阅和交易策略范围。
 
 ## 团队协作
 
