@@ -212,6 +212,7 @@ const MODULES = {
   "futures-contracts": {title: "期货合约", path: "config/futures-contracts", columns: ["market_code", "symbol", "product_code", "expiry_date", "multiplier"], fields: ["market_code", "symbol", "product_code", "exchange_symbol", "multiplier", "expiry_date", "end_trade_time", "main_level"], keyFields: ["market_code", "symbol"], group: "business"},
   snapshots: {title: "资产快照", path: "operations/asset-snapshots", readonly: true, columns: ["project_id", "fund_id", "as_of", "available_balance", "total_value", "risk_degree"], group: "readonly"},
   marketdata: {title: "行情库状态", path: "market-data/summary", readonly: true, columns: ["table", "rows", "first_time", "last_time", "detail"], group: "readonly"},
+  reconciliation: {title: "交易对账", path: "operations/reconciliation", readonly: true, columns: ["recorded_at", "type", "ticker", "exchange", "status", "order_ref", "trade_id", "available", "balance", "error_msg"], group: "readonly"},
   audit: {title: "配置审计", path: "audit", readonly: true, columns: ["created_at", "actor", "action", "resource", "entity_key"], group: "readonly"},
 };
 
@@ -232,6 +233,8 @@ const FIELD_LABELS = {
   as_of: "快照时间", available_balance: "可用资金", total_value: "资产总值", risk_degree: "风险度",
   rows: "数据行数", first_time: "首条时间", last_time: "末条时间", table: "数据表", detail: "说明",
   created_at: "操作时间", actor: "操作人", action: "操作", resource: "资源", entity_key: "对象键",
+  recorded_at: "记录时间", type: "事件类型", exchange: "交易所", order_ref: "委托号", trade_id: "成交号",
+  available: "可用资金", balance: "账户权益", error_msg: "错误信息",
 };
 
 const DECIMAL_FIELDS = new Set(["initial_balance", "price_tick", "margin_ratio"]);
@@ -507,6 +510,18 @@ async function selectModule(module) {
     const rows = await api("operations/asset-snapshots");
     renderSummary([{label: "资产快照数", value: rows.length, detail: "由交易核心同步，前台只读"}]);
     renderTable(meta.columns, rows.map((row, index) => ({key: String(index), ...row})));
+    return;
+  }
+  if (module === "reconciliation") {
+    const snapshot = await api("operations/reconciliation?limit=200");
+    const resync = snapshot.last_resync;
+    renderSummary([
+      {label: "日志状态", value: snapshot.available ? "已接入" : "等待首条记录", detail: snapshot.source},
+      {label: "事件总数", value: Object.values(snapshot.counts || {}).reduce((sum, value) => sum + value, 0), detail: "ATP 标准化事件"},
+      {label: "委托事件", value: snapshot.counts?.order_status || 0, detail: "含恢复查询结果"},
+      {label: "最近恢复", value: resync?.type === "resync_complete" ? "成功" : resync ? "异常" : "尚无记录", detail: resync?.recorded_at || ""},
+    ]);
+    renderTable(meta.columns, (snapshot.records || []).map((row, index) => ({key: String(index), ...row})));
     return;
   }
   if (module === "audit") {

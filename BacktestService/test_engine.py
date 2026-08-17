@@ -31,6 +31,26 @@ class BacktestEngineTest(unittest.TestCase):
         self.assertGreaterEqual(len(result.trades), 2)
         self.assertEqual(result.trades[0].side, "buy")
         self.assertEqual(result.trades[-1].side, "sell")
+        self.assertGreater(result.total_cost, 0)
+        self.assertGreater(result.turnover, 0)
+        self.assertTrue(isinstance(result.sharpe_ratio, float))
+        self.assertEqual(len(result.equity_curve), result.bars)
+        self.assertEqual(result.equity_curve[-1].equity, result.final_equity)
+
+    def test_sell_cost_includes_stamp_duty(self) -> None:
+        rows = []
+        start = datetime(2025, 1, 1, 9, 30)
+        closes = [10, 9, 8, 9, 10, 11, 12, 11, 10, 9, 8, 7]
+        for index, close in enumerate(closes):
+            timestamp = start + timedelta(minutes=index)
+            rows.append(json.dumps({"trdtime": timestamp.isoformat(), "open": close, "high": close, "low": close,
+                                    "close": close, "vol": 100, "amt": close * 100}))
+        with patch("BacktestService.engine._clickhouse_query", return_value="\n".join(rows)):
+            result = run_backtest(BacktestConfig("000001", "SZSE", start, start + timedelta(minutes=20),
+                                                 interval=1, fast_window=2, slow_window=3,
+                                                 commission_rate=0.0, stamp_duty_rate=0.001))
+        sell = next(trade for trade in result.trades if trade.side == "sell")
+        self.assertAlmostEqual(sell.commission, sell.turnover * 0.001)
 
 
 if __name__ == "__main__":

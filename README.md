@@ -15,7 +15,8 @@
 
 ![vn.py 交易工作台运行截图](docs/images/vnpy-trading-workbench.png)
 
-交易端提供证券搜索、按需订阅、五档行情、K 线、资金、持仓、委托、成交和测试下单入口。
+交易端提供证券搜索、按需订阅、五档行情、K 线、资金、持仓、委托、成交和限价委托入口；
+顶部状态栏同步展示柜台可用资金、账户权益、持仓标的数和交易会话状态。
 
 ### SQL 业务字段后台
 
@@ -35,6 +36,7 @@ flowchart LR
     XServer --> Watcher --> Risk[XRiskJudge] --> Trader[XTrader]
     Trader <--> ATP[ATP SDK / AGW 测试柜台]
     ClickHouse[ClickHouse 分钟K线] --> History[HistoryDataService] --> Vnpy
+    History --> Backtest[BacktestService] --> Vnpy
 ~~~
 
 ## 首次构建
@@ -89,6 +91,7 @@ start.sh 会启动权限后台、业务后台、ATP、PyTdx、C++ 行情、风�
 ~~~bash
 cp runtime/config/HistoryData.env.example runtime/config/HistoryData.env
 ./runtime/start-history-data.sh
+./runtime/start-backtest-service.sh
 export QF_HISTORY_URL=http://127.0.0.1:18081
 ~~~
 
@@ -116,6 +119,11 @@ DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 XServer -> XWatcher -> XRiskJudge -> XTrader -> ATP SDK。关闭某证券的买入权限后，
 该证券买单会被 XServer 拒绝；其他已发布证券规则不受影响。
 
+ATP 桥在运行目录维护两类本地追加日志：`atp-order-intents.jsonl` 用于跨重启拒绝
+重复 `OrderToken`，`atp-reconciliation.jsonl` 记录柜台资金、持仓、委托、成交和恢复状态。
+业务后台“交易对账”页只读展示后者，不写业务配置库。vn.py 端也会为柜台回报中的新增成交量
+生成标准成交事件，避免重复显示恢复查询得到的累计成交。
+
 当前证券范围由 PyTdx 主数据与 ClickHouse 历史数据交集生成：
 
 ~~~bash
@@ -128,7 +136,8 @@ XServer -> XWatcher -> XRiskJudge -> XTrader -> ATP SDK。关闭某证券的买�
 
 - 实时行情：PyTdx；接入公司 SDK 时替换 XMarketCenter 行情适配层。
 - 历史数据：ClickHouse tdxdata.stkprice_1min。
-- 交易柜台：ATP 测试账户；生产柜台、公司行情字段映射和断线恢复压测尚未完成。
+- 交易柜台：ATP 测试账户；重连后自动重登并查询资金、持仓、当日委托和成交。
+- 待接入：公司实时行情字段映射、生产柜台准入和断线恢复压测。
 - 运行配置、数据库、日志、SDK 与账户凭据均为本机文件，不提交 Git。
 
 ## 相关文档

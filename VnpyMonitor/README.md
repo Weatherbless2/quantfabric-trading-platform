@@ -40,8 +40,30 @@ cmake -S . -B build -DPython3_EXECUTABLE="$PWD/.vnpy-venv/bin/python"
 cmake --build build --target quantfabric_native -j"$(nproc)"
 ./runtime/prepare.sh
 ./runtime/start.sh
+./runtime/start-history-data.sh
+./runtime/start-backtest-service.sh
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
 ```
+
+默认是手工交易。需要显式启用共享均线策略时使用：
+
+```bash
+DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app \
+  --strategy ma-cross --strategy-volume 100 --strategy-fast 10 --strategy-slow 30
+```
+
+策略只在上一分钟 Bar 完成后计算，历史分钟 Bar 只用于预热，不会产生历史委托；
+连接断开时自动暂停发单。每个策略信号仍通过 vn.py 标准 `OrderRequest` 进入
+`XServer -> XRiskJudge -> XTrader -> ATP`，不会绕过现有权限、发布配置和风控。
+不传 `--strategy ma-cross` 时，工作台保持手工买卖模式。
+
+## 策略回测页
+
+启动回测服务后，工作台底部的“策略回测”页可以选择证券、交易所、日期范围、K 线周期、
+快慢均线和初始资金，直接展示收益率、最大回撤、夏普比率、交易成本及成交明细。页面通过
+`BacktestService` 请求历史数据，不直连 ClickHouse，也不会触发 ATP 委托。服务地址为
+`http://127.0.0.1:18082`。回测结果还包含累计收益和回撤时间曲线，用于观察策略在整个
+区间内的权益变化。
 
 ## 历史 K 线
 
@@ -116,11 +138,12 @@ ATP 测试柜台决定订单是否成交以及是否可撤，界面只对活动�
 - 可加载 5,212 只沪深 A 股证券库；实时行情和五档盘口按用户选择订阅
 - 左侧全量证券库支持代码/名称检索，单击证券即订阅并切换当前行情、盘口、K 线和委托标的
 - 将实时行情按分钟聚合为 K 线和成交量图，数据从前端启动后开始累积
-- XServer 推送的资金、持仓和委托查询
+- XServer 推送的资金、持仓、委托和成交；成交以柜台累计成交量增量生成，恢复查询不会重复展示
 - 普通股票限价买入、限价卖出
 - 委托状态展示和活动委托撤单
 - 首屏只展示当前标的的核心行情和五档盘口；运行日志保留在 `runtime/log/`，不占用交易界面
 - 交易会话与当前标的行情就绪状态展示
+- 本机持久化订单令牌，桌面重启后不会与 ATP 桥的幂等日志复用旧 `OrderToken`
 
 当前交易范围规划为 ATP 现金交易支持的沪深 A 股。证券库中的标的仍会受到账户权限、
 停牌状态、价格规则、持仓与可用资金，以及 ATP 柜台校验的约束。第一版不支持

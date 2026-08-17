@@ -114,6 +114,17 @@ ClickHouse account, then run `./runtime/start-history-data.sh` and export
 [HistoryDataService/README.md](../HistoryDataService/README.md). Without this
 variable the workbench remains fully usable with real-time bars only.
 
+The desktop's “策略回测” tab uses a separate read-only service so the Qt event
+loop never opens a ClickHouse connection. Start it after the history service:
+
+```bash
+./runtime/start-backtest-service.sh
+```
+
+It listens on `http://127.0.0.1:18082` and uses the same session and
+`market:history` authorization as historical K-line queries. Stop it together
+with the other runtime processes using `./runtime/stop.sh`.
+
 When `HistoryDataService` is ready, the BusinessAdmin “行情库状态” page also
 shows its read-only coverage summary. `BusinessAdminService` calls the local
 history service with the existing internal service key and never receives the

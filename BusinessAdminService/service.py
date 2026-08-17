@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import secrets
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Type
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -64,6 +66,53 @@ from .schemas import (
 
 
 UI_PATH = __import__("pathlib").Path(__file__).with_name("ui") / "index.html"
+
+
+RECONCILIATION_TYPES = {
+    "login", "fund", "position", "order_status", "trade", "query_complete",
+    "resync_complete", "resync_error", "cancel_error",
+}
+
+
+def _read_reconciliation(path: str, limit: int) -> dict[str, Any]:
+    """Read the append-only ATP journal as a bounded, read-only operations view."""
+    journal = Path(path)
+    if not journal.exists():
+        return {
+            "available": False,
+            "source": str(journal),
+            "records": [],
+            "counts": {},
+            "last_resync": None,
+        }
+    records: list[dict[str, Any]] = []
+    try:
+        # Reading the tail keeps the control-plane page bounded even after a
+        # long-running trading day. The journal itself remains append-only.
+        lines = journal.read_text(encoding="utf-8").splitlines()[-limit:]
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="ATP reconciliation journal unavailable") from exc
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict) or record.get("type") not in RECONCILIATION_TYPES:
+            continue
+        # Credentials must never be exposed by a monitoring endpoint, even if
+        # a future SDK callback adds them to its payload.
+        safe = {key: value for key, value in record.items()
+                if "password" not in str(key).lower() and "secret" not in str(key).lower()}
+        records.append(safe)
+    counts = dict(Counter(str(item.get("type", "unknown")) for item in records))
+    resync = [item for item in records if item.get("type") in {"resync_complete", "resync_error"}]
+    return {
+        "available": True,
+        "source": str(journal),
+        "records": list(reversed(records)),
+        "counts": counts,
+        "last_resync": resync[-1] if resync else None,
+    }
 
 
 @dataclass(frozen=True)
@@ -693,6 +742,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     available_balance=row.available_balance, frozen_margin=row.frozen_margin,
                     market_value=row.market_value, total_value=row.total_value, total_pnl=row.total_pnl,
                     risk_degree=row.risk_degree, source=row.source) for row in db.scalars(statement)]
+
+    @app.get("/v1/operations/reconciliation")
+    def reconciliation(
+            limit: int = Query(default=200, ge=1, le=2000),
+            session_id: str = Header(alias="X-QF-Session-ID"),
+    ) -> dict[str, Any]:
+        require(session_id, "business:read", "business/reconciliation")
+        return _read_reconciliation(settings.reconciliation_path, limit)
 
     @app.get("/v1/market-data/summary", response_model=MarketDataSummary)
     def market_data_summary(session_id: str = Header(alias="X-QF-Session-ID")) -> MarketDataSummary:

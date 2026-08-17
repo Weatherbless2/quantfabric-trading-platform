@@ -6,16 +6,19 @@ import unicodedata
 from collections import OrderedDict
 from datetime import datetime, time as clock_time
 
+import pyqtgraph as pg
 from vnpy.chart import CandleItem, ChartWidget, VolumeItem
 from vnpy.event import Event
 from vnpy.trader.constant import Direction, Exchange, Interval, Offset, OrderType
-from vnpy.trader.event import EVENT_TICK
+from vnpy.trader.event import EVENT_ACCOUNT, EVENT_ORDER, EVENT_POSITION, EVENT_TICK
 from vnpy.trader.object import BarData, OrderRequest, SubscribeRequest
 from vnpy.trader.ui import QtCore, QtGui, QtWidgets
-from vnpy.trader.ui.widget import AccountMonitor, OrderMonitor, PositionMonitor
+from vnpy.trader.ui.widget import AccountMonitor, OrderMonitor, PositionMonitor, TradeMonitor
 
+from .backtest import BacktestParameters, start_backtest_load
 from .gateway import EVENT_QF_CONNECTION, GATEWAY_NAME, QuantFabricGateway, load_security_master
 from .history import HistoryBar, start_history_load
+from .strategy import VnpyStrategyRunner
 
 def normalize_search_text(value: str) -> str:
     """统一全角/半角字符并忽略证券简称中的空白。"""
@@ -45,6 +48,14 @@ QMainWindow, #central { background: #111820; }
     color: #f09089; background: #412a2d; border: 1px solid #744248;
     border-radius: 3px; padding: 4px 8px;
 }
+#operationStrip { background: #121a23; border-bottom: 1px solid #293745; }
+#operationMetric { min-width: 124px; padding: 0 14px; border-right: 1px solid #293745; }
+#operationMetricLabel { color: #8095a7; font-size: 11px; }
+#operationMetricValue { color: #edf2f7; font-size: 14px; font-weight: 700; }
+#operationRiskReady { color: #82ddba; background: #153c35; border: 1px solid #246552; border-radius: 3px; padding: 4px 8px; }
+#operationRiskWait { color: #f0c074; background: #4a3921; border: 1px solid #83612d; border-radius: 3px; padding: 4px 8px; }
+#backtestMetric { color: #8095a7; }
+#backtestMetricValue { color: #edf2f7; font-weight: 700; }
 #panel { background: #171f28; border: 1px solid #293846; border-radius: 3px; }
 #panelTitle { font-size: 13px; font-weight: 700; color: #edf2f7; }
 #quoteSymbol { font-size: 17px; font-weight: 700; color: #edf2f7; }
@@ -73,6 +84,14 @@ QLineEdit, QAbstractSpinBox {
     padding: 5px 7px; color: #e6edf3; selection-background-color: #38546b;
 }
 QLineEdit:focus, QAbstractSpinBox:focus { border-color: #66869e; }
+QComboBox {
+    background: #111820; border: 1px solid #344555; border-radius: 3px;
+    padding: 5px 7px; color: #e6edf3; selection-background-color: #38546b;
+}
+QComboBox:focus { border-color: #66869e; }
+QComboBox QAbstractItemView {
+    background: #202b36; color: #e6edf3; selection-background-color: #38546b;
+}
 QComboBox::drop-down, QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
     border: none; width: 17px; background: #202b36;
 }
@@ -413,6 +432,81 @@ class QuoteOverview(QtWidgets.QWidget):
         widget.style().polish(widget)
 
 
+class OperationalStatusStrip(QtWidgets.QWidget):
+    """Compact account and order health strip used by an active trading desk."""
+
+    signal_account = QtCore.Signal(Event)
+    signal_position = QtCore.Signal(Event)
+    signal_order = QtCore.Signal(Event)
+
+    def __init__(self, event_engine) -> None:
+        super().__init__()
+        self.setObjectName("operationStrip")
+        self.available = self._metric("可用资金", "--")
+        self.balance = self._metric("账户权益", "--")
+        self.positions = self._metric("持仓标的", "0")
+        self.last_order = self._metric("最新委托", "--")
+        self.risk_state = QtWidgets.QLabel("等待交易会话")
+        self.risk_state.setObjectName("operationRiskWait")
+        self.position_values: dict[str, float] = {}
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setSpacing(0)
+        for metric in (self.available, self.balance, self.positions, self.last_order):
+            layout.addWidget(metric)
+        layout.addStretch()
+        layout.addWidget(self.risk_state)
+
+        self.signal_account.connect(self._update_account)
+        self.signal_position.connect(self._update_position)
+        self.signal_order.connect(self._update_order)
+        event_engine.register(EVENT_ACCOUNT, self.signal_account.emit)
+        event_engine.register(EVENT_POSITION, self.signal_position.emit)
+        event_engine.register(EVENT_ORDER, self.signal_order.emit)
+
+    @staticmethod
+    def _metric(label: str, value: str) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        widget.setObjectName("operationMetric")
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(0, 1, 0, 1)
+        layout.setSpacing(1)
+        title = QtWidgets.QLabel(label)
+        title.setObjectName("operationMetricLabel")
+        content = QtWidgets.QLabel(value)
+        content.setObjectName("operationMetricValue")
+        content.setProperty("metricValue", True)
+        layout.addWidget(title)
+        layout.addWidget(content)
+        return widget
+
+    @staticmethod
+    def _value(metric: QtWidgets.QWidget) -> QtWidgets.QLabel:
+        return metric.findChildren(QtWidgets.QLabel)[-1]
+
+    def set_connection(self, connected: bool) -> None:
+        self.risk_state.setText("风控与交易已就绪" if connected else "等待交易会话")
+        self.risk_state.setObjectName("operationRiskReady" if connected else "operationRiskWait")
+        self.risk_state.style().unpolish(self.risk_state)
+        self.risk_state.style().polish(self.risk_state)
+
+    def _update_account(self, event: Event) -> None:
+        account = event.data
+        self._value(self.available).setText(f"{account.available:,.2f}")
+        self._value(self.balance).setText(f"{account.balance:,.2f}")
+
+    def _update_position(self, event: Event) -> None:
+        position = event.data
+        self.position_values[position.vt_symbol] = position.volume
+        active = sum(volume > 0 for volume in self.position_values.values())
+        self._value(self.positions).setText(str(active))
+
+    def _update_order(self, event: Event) -> None:
+        order = event.data
+        self._value(self.last_order).setText(f"{order.symbol} {order.status.value}")
+
+
 class RealtimeChartWidget(ChartWidget):
     """Tonghuashun-style A-share candles backed by vn.py's chart widget."""
 
@@ -425,6 +519,11 @@ class RealtimeChartWidget(ChartWidget):
         self.add_item(VisibleCandleItem, "candle", "price")
         self.add_plot("volume", minimum_height=45)
         self.add_item(VisibleVolumeItem, "volume", "volume")
+        price_plot = self.get_plot("price")
+        price_plot.setLabel("right", "价格（元）")
+        volume_plot = self.get_plot("volume")
+        volume_plot.setLabel("right", "成交量（股）")
+        volume_plot.setLabel("bottom", "交易时间")
         for plot in self.get_all_plots():
             plot.showGrid(x=True, y=True, alpha=0.18)
             plot.getAxis("right").setPen(QtGui.QPen(QtGui.QColor("#53697a")))
@@ -512,6 +611,8 @@ class TradingPanel(QtWidgets.QWidget):
         self.volume.setSingleStep(100)
         self.volume.setValue(100)
         self.volume.setSuffix(" 股")
+        self.notional = QtWidgets.QLabel("预估金额 --")
+        self.notional.setObjectName("quoteFieldValue")
         self.state = QtWidgets.QLabel("交易会话连接中")
         self.state.setObjectName("statusOffline")
 
@@ -526,6 +627,8 @@ class TradingPanel(QtWidgets.QWidget):
         form.addWidget(self.price, 1)
         form.addWidget(QtWidgets.QLabel("数量"))
         form.addWidget(self.volume, 1)
+        self.price.valueChanged.connect(self._update_notional)
+        self.volume.valueChanged.connect(self._update_notional)
 
         self.buy_button = QtWidgets.QPushButton("买入")
         self.buy_button.setObjectName("buyButton")
@@ -542,10 +645,12 @@ class TradingPanel(QtWidgets.QWidget):
         layout.setSpacing(7)
         layout.addLayout(heading)
         layout.addLayout(form)
+        layout.addWidget(self.notional)
         layout.addLayout(buttons)
         layout.addWidget(self.state)
-        self.setMaximumHeight(168)
+        self.setMaximumHeight(190)
         self.set_trading_enabled(False)
+        self._update_notional()
 
     def set_symbol(self, vt_symbol: str, tick=None) -> None:
         changed = self.vt_symbol != vt_symbol
@@ -579,6 +684,9 @@ class TradingPanel(QtWidgets.QWidget):
         self.state.setObjectName("statusOnline" if enabled else "statusOffline")
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
+
+    def _update_notional(self) -> None:
+        self.notional.setText(f"预估金额 {self.price.value() * self.volume.value():,.2f} 元")
 
     def send_order(self, direction: Direction) -> None:
         if not self.connection_ready or not self.quote_ready:
@@ -614,16 +722,323 @@ class TradingPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "委托未发送", "交易控制未就绪或委托参数无效。")
 
 
+class BacktestCurveWidget(pg.PlotWidget):
+    """Plot cumulative return and drawdown on a shared percentage axis."""
+
+    def __init__(self) -> None:
+        self.time_axis = pg.DateAxisItem(orientation="bottom")
+        super().__init__(axisItems={"bottom": self.time_axis})
+        self.setBackground("#171f28")
+        self.showGrid(x=True, y=True, alpha=0.18)
+        self.setTitle("策略收益与回撤", color="#edf2f7", size="10pt")
+        self.setLabel("left", "比例 (%)")
+        self.setLabel("bottom", "交易时间")
+        self.getAxis("left").setPen(pg.mkPen("#53697a"))
+        self.getAxis("left").setTextPen(pg.mkPen("#a7b7c3"))
+        self.getAxis("bottom").setPen(pg.mkPen("#53697a"))
+        self.getAxis("bottom").setTextPen(pg.mkPen("#a7b7c3"))
+        self.addLegend(offset=(8, 8))
+        self.return_line = self.plot([], [], name="累计收益率", pen=pg.mkPen("#d94f49", width=2))
+        self.drawdown_line = self.plot([], [], name="回撤率", pen=pg.mkPen("#25bd8a", width=2))
+
+    def set_points(self, points: list[dict]) -> None:
+        x_values = []
+        for index, point in enumerate(points):
+            try:
+                x_values.append(datetime.fromisoformat(str(point["datetime"])).timestamp())
+            except (KeyError, TypeError, ValueError, OverflowError):
+                # A malformed point should not prevent the rest of the report
+                # from being reviewed; its position remains deterministic.
+                x_values.append(float(index))
+        returns = [float(point.get("return_rate", 0)) * 100 for point in points]
+        drawdowns = [float(point.get("drawdown", 0)) * 100 for point in points]
+        self.return_line.setData(x_values, returns)
+        self.drawdown_line.setData(x_values, drawdowns)
+
+
+class BacktestPanel(QtWidgets.QWidget):
+    """Run read-only historical research without blocking trading events."""
+
+    signal_loaded = QtCore.Signal(dict)
+    signal_failed = QtCore.Signal(str)
+
+    def __init__(self, service_setting) -> None:
+        super().__init__()
+        self.service_setting = service_setting
+        self.current_vt_symbol = "300007.SZSE"
+        self.request_thread: QtCore.QThread | None = None
+        self.request_worker = None
+
+        self.symbol_edit = QtWidgets.QLineEdit("300007")
+        self.symbol_edit.setMaxLength(6)
+        self.symbol_edit.setPlaceholderText("证券代码")
+        self.exchange_combo = QtWidgets.QComboBox()
+        self.exchange_combo.addItem("深圳证券交易所", "SZSE")
+        self.exchange_combo.addItem("上海证券交易所", "SSE")
+        self.use_current_button = QtWidgets.QPushButton("使用当前标的")
+        self.use_current_button.clicked.connect(self._use_current_symbol)
+
+        today = QtCore.QDate.currentDate()
+        self.start_date = QtWidgets.QDateEdit(today.addMonths(-6))
+        self.end_date = QtWidgets.QDateEdit(today)
+        for widget in (self.start_date, self.end_date):
+            widget.setCalendarPopup(True)
+            widget.setDisplayFormat("yyyy-MM-dd")
+
+        self.interval_combo = QtWidgets.QComboBox()
+        for label, interval in (("1 分钟", 1), ("5 分钟", 5), ("15 分钟", 15),
+                                ("30 分钟", 30), ("60 分钟", 60)):
+            self.interval_combo.addItem(label, interval)
+        self.interval_combo.setCurrentIndex(1)
+        self.fast_window = self._integer_spin(10, 1, 500)
+        self.slow_window = self._integer_spin(30, 2, 1000)
+        self.capital = QtWidgets.QDoubleSpinBox()
+        self.capital.setRange(1_000, 10_000_000_000)
+        self.capital.setDecimals(0)
+        self.capital.setSingleStep(100_000)
+        self.capital.setValue(1_000_000)
+        self.capital.setSuffix(" 元")
+        self.run_button = QtWidgets.QPushButton("运行回测")
+        self.run_button.clicked.connect(self.run_backtest)
+        self.status = QtWidgets.QLabel("等待回测服务")
+        self.status.setObjectName("statusOffline")
+        self.curve = BacktestCurveWidget()
+        self.curve.setMinimumHeight(145)
+
+        form = QtWidgets.QGridLayout()
+        form.setContentsMargins(10, 8, 10, 5)
+        form.setHorizontalSpacing(7)
+        form.setVerticalSpacing(6)
+        fields = (
+            ("标的代码", self.symbol_edit, 0, 0),
+            ("交易所", self.exchange_combo, 0, 2),
+            ("开始日期", self.start_date, 0, 4),
+            ("结束日期", self.end_date, 0, 6),
+            ("K 线周期", self.interval_combo, 1, 0),
+            ("快均线", self.fast_window, 1, 2),
+            ("慢均线", self.slow_window, 1, 4),
+            ("初始资金", self.capital, 1, 6),
+        )
+        for label, widget, row, column in fields:
+            form.addWidget(QtWidgets.QLabel(label), row, column)
+            form.addWidget(widget, row, column + 1)
+        form.addWidget(self.use_current_button, 0, 8)
+        form.addWidget(self.run_button, 1, 8)
+
+        self.metric_table = QtWidgets.QTableWidget(0, 2)
+        self.metric_table.setHorizontalHeaderLabels(["指标", "结果"])
+        self.metric_table.verticalHeader().hide()
+        self.metric_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.metric_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.metric_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+
+        self.trade_table = QtWidgets.QTableWidget(0, 7)
+        self.trade_table.setHorizontalHeaderLabels([
+            "成交时间", "成交方向", "成交价格", "成交数量", "成交金额", "交易成本", "已实现盈亏"
+        ])
+        self.trade_table.verticalHeader().hide()
+        self.trade_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.trade_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.trade_table.setAlternatingRowColors(True)
+        self.trade_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.trade_table.horizontalHeader().setStretchLastSection(True)
+
+        result_layout = QtWidgets.QHBoxLayout()
+        result_layout.setContentsMargins(10, 0, 10, 8)
+        result_layout.setSpacing(8)
+        metrics_panel = QtWidgets.QWidget()
+        metrics_panel.setObjectName("panel")
+        metrics_layout = QtWidgets.QVBoxLayout(metrics_panel)
+        metrics_layout.setContentsMargins(8, 8, 8, 8)
+        metrics_title = QtWidgets.QLabel("回测结果")
+        metrics_title.setObjectName("panelTitle")
+        metrics_layout.addWidget(metrics_title)
+        metrics_layout.addWidget(self.metric_table)
+        trades_panel = QtWidgets.QWidget()
+        trades_panel.setObjectName("panel")
+        trades_layout = QtWidgets.QVBoxLayout(trades_panel)
+        trades_layout.setContentsMargins(8, 8, 8, 8)
+        trades_title = QtWidgets.QLabel("成交明细")
+        trades_title.setObjectName("panelTitle")
+        trades_layout.addWidget(trades_title)
+        trades_layout.addWidget(self.trade_table)
+        result_layout.addWidget(metrics_panel, 2)
+        result_layout.addWidget(trades_panel, 5)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addLayout(form)
+        layout.addWidget(self.status)
+        layout.addWidget(self.curve)
+        layout.addLayout(result_layout, 1)
+
+        self.signal_loaded.connect(self._show_result)
+        self.signal_failed.connect(self._show_error)
+        self.set_symbol(self.current_vt_symbol)
+
+    @staticmethod
+    def _integer_spin(value: int, minimum: int, maximum: int) -> QtWidgets.QSpinBox:
+        widget = QtWidgets.QSpinBox()
+        widget.setRange(minimum, maximum)
+        widget.setValue(value)
+        return widget
+
+    def set_symbol(self, vt_symbol: str) -> None:
+        """Use the trading screen's selected symbol as the research default."""
+        if not vt_symbol or "." not in vt_symbol:
+            return
+        self.current_vt_symbol = vt_symbol
+        symbol, exchange = vt_symbol.rsplit(".", 1)
+        self.symbol_edit.setText(symbol)
+        index = self.exchange_combo.findData(exchange)
+        if index >= 0:
+            self.exchange_combo.setCurrentIndex(index)
+
+    def _use_current_symbol(self) -> None:
+        self.set_symbol(self.current_vt_symbol)
+
+    def run_backtest(self) -> None:
+        if self.request_thread and self.request_thread.isRunning():
+            return
+        try:
+            symbol = self.symbol_edit.text().strip()
+            if len(symbol) != 6 or not symbol.isdigit():
+                raise ValueError("标的必须是 6 位证券代码")
+            if self.start_date.date() > self.end_date.date():
+                raise ValueError("结束日期不能早于开始日期")
+            fast_window = self.fast_window.value()
+            slow_window = self.slow_window.value()
+            if fast_window >= slow_window:
+                raise ValueError("快线必须小于慢线")
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+
+        service_url, session_id = self.service_setting()
+        if not service_url or not session_id:
+            self._show_error("回测服务或交易登录会话未就绪")
+            return
+        parameters = BacktestParameters(
+            symbol=symbol,
+            exchange=str(self.exchange_combo.currentData()),
+            start=self.start_date.date().toString("yyyy-MM-dd"),
+            end=self.end_date.date().toString("yyyy-MM-dd"),
+            interval=int(self.interval_combo.currentData()),
+            fast_window=fast_window,
+            slow_window=slow_window,
+            capital=float(self.capital.value()),
+        )
+        self.run_button.setEnabled(False)
+        self._set_status("正在读取历史数据并运行回测", False)
+        thread, worker = start_backtest_load(
+            service_url, session_id, parameters,
+            self.signal_loaded.emit, self.signal_failed.emit,
+        )
+        thread.finished.connect(lambda: self._finish_request(thread))
+        self.request_thread = thread
+        self.request_worker = worker
+        thread.start()
+
+    def _finish_request(self, thread: QtCore.QThread) -> None:
+        if self.request_thread is thread:
+            self.request_thread = None
+            self.request_worker = None
+            self.run_button.setEnabled(True)
+
+    def _show_result(self, result: dict) -> None:
+        self.curve.set_points(result.get("equity_curve", []))
+        metrics = (
+            ("数据源", str(result.get("source", "--"))),
+            ("K 线数量", f"{int(result.get('bars', 0)):,}"),
+            ("成交笔数", f"{len(result.get('trades', [])):,}"),
+            ("期末权益", self._money(result.get("final_equity", 0))),
+            ("区间收益率", self._percent(result.get("return_rate", 0))),
+            ("年化收益率", self._percent(result.get("annualized_return", 0))),
+            ("最大回撤金额", self._money(result.get("max_drawdown", 0))),
+            ("最大回撤率", self._percent(self._max_drawdown_rate(result))),
+            ("夏普比率", f"{float(result.get('sharpe_ratio', 0)):.2f}"),
+            ("胜率", self._percent(result.get("win_rate", 0))),
+            ("换手率", self._percent(result.get("turnover", 0))),
+            ("总交易成本", self._money(result.get("total_cost", 0))),
+        )
+        self.metric_table.setRowCount(len(metrics))
+        for row, (label, value) in enumerate(metrics):
+            self.metric_table.setItem(row, 0, QtWidgets.QTableWidgetItem(label))
+            item = QtWidgets.QTableWidgetItem(value)
+            item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            self.metric_table.setItem(row, 1, item)
+
+        trades = result.get("trades", [])
+        self.trade_table.setUpdatesEnabled(False)
+        try:
+            self.trade_table.setRowCount(len(trades))
+            for row, trade in enumerate(trades):
+                direction = "买入" if trade.get("side") == "buy" else "卖出"
+                values = (
+                    str(trade.get("datetime", "")),
+                    direction,
+                    f"{float(trade.get('price', 0)):,.2f}",
+                    f"{int(trade.get('volume', 0)):,}",
+                    self._money(trade.get("turnover", 0)),
+                    self._money(trade.get("commission", 0)),
+                    self._money(trade.get("realized_pnl", 0)),
+                )
+                for column, value in enumerate(values):
+                    item = QtWidgets.QTableWidgetItem(value)
+                    if column >= 2:
+                        item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                    if column == 1:
+                        item.setForeground(QtGui.QColor("#c0392b" if direction == "买入" else "#16825d"))
+                    if column == 6 and float(trade.get("realized_pnl", 0)):
+                        item.setForeground(QtGui.QColor(
+                            "#c0392b" if float(trade["realized_pnl"]) > 0 else "#16825d"
+                        ))
+                    self.trade_table.setItem(row, column, item)
+        finally:
+            self.trade_table.setUpdatesEnabled(True)
+        self._set_status(f"回测完成：{int(result.get('bars', 0)):,} 根 K 线，{len(trades):,} 笔成交", True)
+
+    def _show_error(self, detail: str) -> None:
+        self._set_status(f"回测失败：{detail}", False)
+
+    def _set_status(self, text: str, ready: bool) -> None:
+        self.status.setText(text)
+        self.status.setObjectName("statusOnline" if ready else "statusOffline")
+        self.status.style().unpolish(self.status)
+        self.status.style().polish(self.status)
+
+    @staticmethod
+    def _money(value) -> str:
+        return f"{float(value or 0):,.2f} 元"
+
+    @staticmethod
+    def _percent(value) -> str:
+        return f"{float(value or 0):.2%}"
+
+    @staticmethod
+    def _max_drawdown_rate(result: dict) -> float:
+        """Return drawdown as a positive loss percentage for the summary table."""
+        points = result.get("equity_curve", [])
+        return abs(min((float(point.get("drawdown", 0)) for point in points), default=0.0))
+
+    def shutdown(self) -> None:
+        if self.request_thread and self.request_thread.isRunning():
+            self.request_thread.quit()
+
+
 class WorkbenchWindow(QtWidgets.QMainWindow):
     signal_tick = QtCore.Signal(Event)
     signal_connection = QtCore.Signal(Event)
     signal_history_loaded = QtCore.Signal(str, int, list)
     signal_history_failed = QtCore.Signal(str, str)
 
-    def __init__(self, main_engine, event_engine) -> None:
+    def __init__(self, main_engine, event_engine,
+                 strategy_runner: VnpyStrategyRunner | None = None) -> None:
         super().__init__()
         self.main_engine = main_engine
         self.event_engine = event_engine
+        self.strategy_runner = strategy_runner
         self.ticks = {}
         # Live minute bars remain separate from database history.  The chart
         # merges them only after aggregating both sources to the same period.
@@ -644,6 +1059,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(1100, 700)
         self._build_ui()
         self._register_events()
+        if self.strategy_runner:
+            self.strategy_runner.set_symbol(self.selected_vt_symbol)
+            self._set_strategy_state("策略等待连接", False)
 
     def _build_ui(self) -> None:
         central = QtWidgets.QWidget()
@@ -653,6 +1071,8 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._create_header())
+        self.operation_strip = OperationalStatusStrip(self.event_engine)
+        root.addWidget(self.operation_strip)
 
         content = QtWidgets.QWidget()
         content_layout = QtWidgets.QVBoxLayout(content)
@@ -672,7 +1092,7 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.chart_title.setObjectName("panelTitle")
         chart_header.addWidget(self.chart_title)
         chart_header.addStretch()
-        chart_header.addWidget(QtWidgets.QLabel("周期"))
+        chart_header.addWidget(QtWidgets.QLabel("K 线周期"))
         self.interval_combo = QtWidgets.QComboBox()
         self.interval_combo.addItem("1 分钟", 1)
         self.interval_combo.addItem("5 分钟", 5)
@@ -703,10 +1123,12 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         self.account_monitor = AccountMonitor(self.main_engine, self.event_engine)
         self.position_monitor = PositionMonitor(self.main_engine, self.event_engine)
         self.order_monitor = ConfirmingOrderMonitor(self.main_engine, self.event_engine)
+        self.trade_monitor = TradeMonitor(self.main_engine, self.event_engine)
         for monitor in (
             self.account_monitor,
             self.position_monitor,
             self.order_monitor,
+            self.trade_monitor,
         ):
             monitor.horizontalHeader().setSectionResizeMode(
                 QtWidgets.QHeaderView.ResizeMode.ResizeToContents
@@ -720,11 +1142,16 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             self.order_monitor,
             {"reference", "offset", "gateway_name"},
         )
+        self._hide_monitor_columns(self.trade_monitor, {"gateway_name"})
+        self.backtest_panel = BacktestPanel(self._backtest_service_setting)
+        self.backtest_panel.set_symbol(self.selected_vt_symbol)
         self.security_panel = SecurityUniversePanel(self.securities, self._select_security_row)
         self.security_table = self.security_panel.table
         tabs.addTab(self.account_monitor, "资金")
         tabs.addTab(self.position_monitor, "持仓")
         tabs.addTab(self.order_monitor, "委托")
+        tabs.addTab(self.trade_monitor, "成交")
+        tabs.addTab(self.backtest_panel, "策略回测")
         content_layout.addWidget(tabs, 4)
 
         self.security_dock = QtWidgets.QDockWidget(f"行情列表  {len(self.securities)}", self)
@@ -748,10 +1175,13 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         market_label.setObjectName("marketLabel")
         self.session_state = QtWidgets.QLabel("交易会话连接中")
         self.session_state.setObjectName("statusOffline")
+        self.strategy_state = QtWidgets.QLabel("手工交易")
+        self.strategy_state.setObjectName("statusOnline")
         layout.addWidget(mark)
         layout.addWidget(brand)
         layout.addWidget(market_label)
         layout.addStretch()
+        layout.addWidget(self.strategy_state)
         layout.addWidget(self.session_state)
 
         return header
@@ -777,6 +1207,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         if not vt_symbol or "." not in vt_symbol:
             return
         self.selected_vt_symbol = vt_symbol
+        if self.strategy_runner:
+            self.strategy_runner.set_symbol(vt_symbol)
+        self.backtest_panel.set_symbol(vt_symbol)
         self.order_book.set_symbol(vt_symbol)
         tick = self.ticks.get(vt_symbol)
         self.trading_panel.set_symbol(vt_symbol, tick)
@@ -799,6 +1232,12 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             return "", ""
         return gateway.history_url, gateway.auth_session_id
 
+    def _backtest_service_setting(self) -> tuple[str, str]:
+        gateway = self.main_engine.get_gateway(GATEWAY_NAME)
+        if not isinstance(gateway, QuantFabricGateway):
+            return "", ""
+        return gateway.backtest_url, gateway.auth_session_id
+
     def _load_history(self, vt_symbol: str) -> None:
         service_url, session_id = self._history_service_setting()
         if not service_url or not session_id or "." not in vt_symbol:
@@ -820,6 +1259,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
                         history: list[HistoryBar]) -> None:
         bars = [_bar_from_history(vt_symbol, item) for item in history]
         self.history_bars[(vt_symbol, interval)] = bars
+        if self.strategy_runner and interval == 1 and vt_symbol == self.selected_vt_symbol:
+            self.strategy_runner.prime(bars)
+            self._set_strategy_state("策略已预热", False)
         if vt_symbol == self.selected_vt_symbol and interval == self.history_interval:
             self._render_chart(vt_symbol)
 
@@ -855,6 +1297,9 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         bars = self.bars.setdefault(tick.vt_symbol, OrderedDict())
         bar = bars.get(bar_datetime)
         if bar is None:
+            previous_bar = next(reversed(bars.values()), None)
+            if previous_bar is not None:
+                self._dispatch_strategy_bar(previous_bar)
             self.volume_anchors[tick.vt_symbol] = tick.volume
             bar = BarData(
                 gateway_name=GATEWAY_NAME,
@@ -877,6 +1322,24 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
             bars.popitem(last=False)
         if self.selected_vt_symbol == tick.vt_symbol:
             self._render_chart(tick.vt_symbol)
+
+    def _dispatch_strategy_bar(self, bar: BarData) -> None:
+        """Send only completed minute bars to the optional live strategy."""
+        if not self.strategy_runner or bar.vt_symbol != self.selected_vt_symbol:
+            return
+        orderid = self.strategy_runner.on_bar(bar)
+        if orderid:
+            self._set_strategy_state(f"策略委托 {orderid.rsplit('.', 1)[-1]}", True)
+        elif self.strategy_runner.last_signal:
+            self._set_strategy_state("策略信号已生成，等待风控", True)
+
+    def _set_strategy_state(self, text: str, active: bool) -> None:
+        if not self.strategy_runner:
+            return
+        self.strategy_state.setText(text)
+        self.strategy_state.setObjectName("statusOnline" if active else "statusOffline")
+        self.strategy_state.style().unpolish(self.strategy_state)
+        self.strategy_state.style().polish(self.strategy_state)
 
     def _render_chart(self, vt_symbol: str) -> None:
         bars = self._merge_chart_bars(vt_symbol)
@@ -965,6 +1428,10 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         if data["name"] == "C++原生会话":
             enabled = bool(data["connected"])
             self.trading_panel.set_trading_enabled(enabled)
+            self.operation_strip.set_connection(enabled)
+            if self.strategy_runner:
+                self.strategy_runner.set_enabled(enabled)
+                self._set_strategy_state("策略运行中" if enabled else "策略已暂停（连接断开）", enabled)
             self.session_state.setText("交易会话已连接" if enabled else "交易会话未连接")
             self.session_state.setObjectName("statusOnline" if enabled else "statusOffline")
             self.session_state.style().unpolish(self.session_state)
@@ -990,5 +1457,6 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         for thread in self.history_threads.values():
             if thread.isRunning():
                 thread.quit()
+        self.backtest_panel.shutdown()
         self.main_engine.close()
         event.accept()

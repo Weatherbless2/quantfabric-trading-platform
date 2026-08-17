@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from vnpy.event import EVENT_TIMER
-from vnpy.trader.constant import Direction, Exchange, OrderType, Product, Status
+from vnpy.trader.constant import Direction, Exchange, Offset, OrderType, Product, Status
 from vnpy.trader.gateway import BaseGateway
 from vnpy.trader.object import (
     AccountData,
@@ -26,6 +26,7 @@ from vnpy.trader.object import (
     PositionData,
     SubscribeRequest,
     TickData,
+    TradeData,
 )
 
 
@@ -47,7 +48,41 @@ EVENT_QF_CONNECTION = "eQuantFabricConnection"
 GATEWAY_NAME = "QUANTFABRIC"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SECURITY_MASTER_PATH = REPO_ROOT / "runtime" / "data" / "security_master.json"
+ORDER_TOKEN_PATH = REPO_ROOT / "runtime" / "data" / "vnpy-order-token.txt"
 AUTH_SESSION_ID_LENGTH = 30
+MAX_ORDER_TOKEN = 2_147_483_647
+
+
+class OrderTokenAllocator:
+    """Allocate a durable token that remains unique after a desktop restart."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def next(self) -> int:
+        # PackMessage carries a signed 32-bit token. A file lock makes the
+        # sequence safe for two local vn.py workbenches sharing one runtime.
+        import fcntl
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a+", encoding="ascii") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                stream.seek(0)
+                try:
+                    previous = int(stream.read().strip() or "0")
+                except ValueError:
+                    previous = 0
+                token = max(previous + 1, int(time.time()))
+                if token > MAX_ORDER_TOKEN:
+                    raise RuntimeError("本地订单令牌已达到上限，需要受控轮换交易运行目录")
+                stream.seek(0)
+                stream.truncate()
+                stream.write(str(token))
+                stream.flush()
+                return token
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def create_auth_session(service_url: str, username: str, password: str,
@@ -138,7 +173,9 @@ class QuantFabricGateway(BaseGateway):
         self.contracts: set[str] = set()
         self.orders_enabled = False
         self.order_token = 0
+        self.order_tokens = OrderTokenAllocator(ORDER_TOKEN_PATH)
         self.order_refs: dict[str, str] = {}
+        self._last_traded: dict[str, float] = {}
         self.pending_order_tokens: set[str] = set()
         self.security_master = load_security_master()
         self.security_names = {
@@ -155,12 +192,14 @@ class QuantFabricGateway(BaseGateway):
         self._connection_setting: dict | None = None
         self.auth_session_id = ""
         self.history_url = ""
+        self.backtest_url = ""
 
     def connect(self, setting: dict) -> None:
         if self.native_client:
             return
         self.account_id = str(setting.get("资金账号", self.account_id))
         self.history_url = str(setting.get("历史行情地址", "")).rstrip("/")
+        self.backtest_url = str(setting.get("回测服务地址", "")).rstrip("/")
         self._connection_setting = dict(setting)
         self.event_engine.register(EVENT_TIMER, self._on_timer)
         self._open_authenticated_connection()
@@ -244,7 +283,14 @@ class QuantFabricGateway(BaseGateway):
             self.write_log("价格必须大于 0，数量必须是 100 股的整数倍")
             return ""
 
-        self.order_token += 1
+        try:
+            self.order_token = self.order_tokens.next()
+        except OSError as exc:
+            self.write_log(f"本地订单令牌不可用，委托未发送：{exc}")
+            return ""
+        except RuntimeError as exc:
+            self.write_log(f"本地订单令牌不可用，委托未发送：{exc}")
+            return ""
         orderid = str(self.order_token)
         sent = self.native_client.send_order(
             req.symbol,
@@ -480,6 +526,27 @@ class QuantFabricGateway(BaseGateway):
                 return
             order = self._map_order(message)
             self.on_order(order)
+            # ATP reports cumulative traded volume in order status callbacks.
+            # Convert only the positive delta into vn.py TradeData so a
+            # reconnect/query does not duplicate an already displayed fill.
+            traded = float(message.get("traded", 0) or 0)
+            previous = self._last_traded.get(order.orderid, 0.0)
+            if traded > previous:
+                exchange = map_exchange(message.get("exchange", ""))
+                traded_price = float(message.get("traded_price", 0) or 0) or order.price
+                self.on_trade(TradeData(
+                    gateway_name=self.gateway_name,
+                    symbol=order.symbol,
+                    exchange=exchange,
+                    orderid=order.orderid,
+                    tradeid=f"{order.orderid}-{int(traded)}",
+                    direction=order.direction,
+                    offset=Offset.NONE,
+                    price=traded_price,
+                    volume=traded - previous,
+                    datetime=order.datetime,
+                ))
+                self._last_traded[order.orderid] = traded
             trace_id = order_trace_id(
                 self.account_id,
                 message.get("order_token", ""),
@@ -503,9 +570,13 @@ class QuantFabricGateway(BaseGateway):
         }
         order_token = str(message.get("order_token") or "").strip()
         order_ref = str(message.get("order_ref") or message.get("order_sys_id") or "-").strip()
-        if order_token and order_ref != "-":
-            self.order_refs[order_token] = order_ref
-            self.pending_order_tokens.discard(order_token)
+        if order_token:
+            if order_ref != "-":
+                self.order_refs[order_token] = order_ref
+            # XServer can reject a request before XTrader allocates an ATP
+            # order reference. Its terminal reply still owns this token.
+            if order_ref != "-" or str(message.get("status", "")) == "rejected":
+                self.pending_order_tokens.discard(order_token)
         return OrderData(
             gateway_name=self.gateway_name,
             symbol=str(message.get("ticker", "")).strip(),

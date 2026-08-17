@@ -44,6 +44,43 @@ class BusinessControlPlaneTest(unittest.TestCase):
         )
         self.client = TestClient(create_app(settings))
 
+    def test_reconciliation_view_reads_only_normalized_events(self) -> None:
+        journal = Path(self.temp_dir.name) / "atp-reconciliation.jsonl"
+        journal.write_text(
+            json.dumps({"recorded_at": 1, "type": "fund", "balance": 100, "password": "never-show"})
+            + "\n"
+            + json.dumps({"recorded_at": 2, "type": "resync_complete", "name": "atp"})
+            + "\n"
+            + json.dumps({"recorded_at": 3, "type": "internal_debug", "secret": "hidden"})
+            + "\n",
+            encoding="utf-8",
+        )
+        # The service instance is captured by the app dependency closure; set
+        # the configured path through the immutable Settings used at creation.
+        # Recreate a tiny app with the same auth mock and the temporary journal.
+        settings = Settings(
+            database_url=f"sqlite:///{Path(self.temp_dir.name) / 'reconciliation-business.db'}",
+            auth_url="http://127.0.0.1:18080",
+            auth_internal_key="test-internal-key",
+            domain="desk:cn_equity",
+            market_data_url="",
+            market_data_schema="tdx_init_test",
+            market_data_table="stkprice_1min",
+            history_service_url="http://127.0.0.1:18081",
+            reconciliation_path=str(journal),
+        )
+        client = TestClient(create_app(settings))
+        with patch("BusinessAdminService.service.urlopen", side_effect=self.auth_urlopen):
+            login_response = client.post("/v1/sessions/development", json={"username": "admin", "password": "test-password"})
+            response = client.get("/v1/operations/reconciliation?limit=20", headers={
+                "X-QF-Session-ID": login_response.json()["session_id"],
+            })
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["counts"], {"resync_complete": 1, "fund": 1})
+        self.assertEqual(len(payload["records"]), 2)
+        self.assertNotIn("password", payload["records"][1])
+
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 

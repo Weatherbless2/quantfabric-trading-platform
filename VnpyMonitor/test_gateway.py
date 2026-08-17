@@ -1,8 +1,10 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from vnpy.event import EventEngine
-from vnpy.trader.constant import Direction, Exchange, OrderType
+from vnpy.trader.constant import Direction, Exchange, OrderType, Status
 from vnpy.trader.object import CancelRequest, OrderRequest, SubscribeRequest
 
 from VnpyMonitor.gateway import (
@@ -116,11 +118,19 @@ class AuthSessionTest(unittest.TestCase):
 class NativeTradingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.event_engine = EventEngine()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.token_path = Path(self.temp_dir.name) / "order-token.txt"
+        self.token_patch = patch("VnpyMonitor.gateway.ORDER_TOKEN_PATH", self.token_path)
+        self.token_patch.start()
         self.gateway = QuantFabricGateway(self.event_engine, GATEWAY_NAME)
         self.native_client = FakeNativeClient()
         self.gateway.native_client = self.native_client
         self.gateway.orders_enabled = True
         self.gateway.received_quotes.add("300007.SZSE")
+
+    def tearDown(self) -> None:
+        self.token_patch.stop()
+        self.temp_dir.cleanup()
 
     def test_gateway_defaults_use_atp_counter(self) -> None:
         self.assertEqual(self.gateway.default_setting["交易机房"], "ATPTest")
@@ -154,21 +164,31 @@ class NativeTradingTest(unittest.TestCase):
 
     def test_order_maps_to_native_request(self) -> None:
         vt_orderid = self.gateway.send_order(self.order_request())
-        self.assertEqual(vt_orderid, f"{GATEWAY_NAME}.1")
+        token = int(vt_orderid.rsplit(".", 1)[1])
+        self.assertGreater(token, 0)
         self.assertEqual(self.native_client.orders, [
-            ("300007", "SZSE", 1, 18.56, 100, 1),
+            ("300007", "SZSE", 1, 18.56, 100, token),
         ])
 
+    def test_order_token_is_durable_across_gateway_restarts(self) -> None:
+        first = int(self.gateway.send_order(self.order_request()).rsplit(".", 1)[1])
+        restarted = QuantFabricGateway(self.event_engine, GATEWAY_NAME)
+        restarted.native_client = self.native_client
+        restarted.orders_enabled = True
+        restarted.received_quotes.add("300007.SZSE")
+        second = int(restarted.send_order(self.order_request()).rsplit(".", 1)[1])
+        self.assertGreater(second, first)
+
     def test_cancel_waits_for_order_reference(self) -> None:
-        self.gateway.send_order(self.order_request())
-        request = CancelRequest(orderid="1", symbol="300007", exchange=Exchange.SZSE)
+        orderid = self.gateway.send_order(self.order_request()).rsplit(".", 1)[1]
+        request = CancelRequest(orderid=orderid, symbol="300007", exchange=Exchange.SZSE)
         self.gateway.cancel_order(request)
         self.assertEqual(self.native_client.cancels, [])
 
         self.gateway._map_order({
             "ticker": "300007",
             "exchange": "SZSE",
-            "order_token": 1,
+            "order_token": int(orderid),
             "order_ref": "ATP-1024",
             "side": 1,
         })
@@ -188,6 +208,28 @@ class NativeTradingTest(unittest.TestCase):
             "status": "rejected",
         })
         self.assertEqual(orders, [])
+
+    def test_xserver_rejection_without_counter_reference_is_terminal(self) -> None:
+        orders = []
+        self.gateway.on_order = orders.append
+        self.gateway.pending_order_tokens.add("42")
+
+        self.gateway._on_trade_message({
+            "type": "order_status",
+            "ticker": "300007",
+            "exchange": "SZSE",
+            "order_token": 42,
+            "order_ref": "",
+            "side": 1,
+            "price": 18.56,
+            "volume": 100,
+            "status": "rejected",
+            "error_id": -1003,
+        })
+
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].status, Status.REJECTED)
+        self.assertNotIn("42", self.gateway.pending_order_tokens)
 
     def test_session_event_requires_login_before_orders_are_enabled(self) -> None:
         events = []
