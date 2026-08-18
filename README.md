@@ -6,31 +6,43 @@ QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台
 
 ## 当前发布版本
 
-根仓库 `main` 已锁定可复现的交易端版本。其他开发者请使用递归克隆：
+根仓库通过 gitlink 固定每一个子模块的提交。为了保证所有开发者拿到完全一致的版本，请使用发布标签递归克隆：
 
 ```bash
-git clone --recurse-submodules git@github.com:Weatherbless2/quantfabric-trading-platform.git
+git clone --branch v2026.08.18-final --recurse-submodules git@github.com:Weatherbless2/quantfabric-trading-platform.git
 cd quantfabric-trading-platform
 git submodule update --init --recursive
 ```
 
-本次发布的关键子模块提交如下：
+如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次最终版本时，必须使用上面的 `v2026.08.18-final` 标签。
+
+本次发布的根仓库和全部子模块提交如下：
 
 | 子模块 | 发布提交 | 用途 |
 | --- | --- | --- |
+| 根仓库发布标签 | `v2026.08.18-final` | 平台总工程和全部子模块版本锁定 |
+| `XWatcher` | `a2ef0f7c2901b8e2a35e759da209f2b9005206ce` | 监控和交易数据转发 |
 | `XServer` | `2f63b78c0e48664fc70a08099d94c871043905d8` | 会话、请求转发和服务端业务编排 |
 | `XTrader` | `9ef8b1ac9a59a6582cb3b5764577b3d7e58261dc` | 交易业务处理和 ATP 柜台适配 |
 | `XRiskJudge` | `2cd183151fb43ed2fcfef3a0fe46783a24845eb1` | 账户容量、流控、撤单和异常交易风控 |
+| `XMonitor` | `d405a4788543677b545b9ca906381836fc77f971` | Qt 交易端监控和授权会话 |
+| `XMarketCenter` | `a89128648d26719b9600158bb93054d3dc1dfb5e` | 行情接入和行情服务 |
+| `XAPI` | `af0dee1afb0319474ebb9efb136c121b0591b581` | 第三方柜台、网络和基础库 |
+| `Utils` | `7685d57cbd11473d7c15c4b9454fdb60b258a4b2` | 公共配置和业务策略支持 |
+| `SHMServer` | `227f1e6201e4709967fede1ab4818067112aa52a` | 共享内存通信 |
+| `XQuant` | `0eef8ca232538a396de405a21d21d8000d2840b9` | 客户端协议和量化接口 |
 
-递归克隆会从 `Weatherbless2` 下的对应子模块获取这些提交，不依赖本机已有的旧目录或旧分支。验收时可执行：
+递归克隆会从 `Weatherbless2` 下的对应 fork 获取这些提交，不依赖本机已有的旧目录或旧分支。验收时可执行：
 
 ```bash
+git rev-parse HEAD
+git submodule status --recursive
 git -C XServer rev-parse HEAD
 git -C XTrader rev-parse HEAD
 git -C XRiskJudge rev-parse HEAD
 ```
 
-输出应分别与上表提交一致。根仓库的 `.gitmodules` 已使用 `Weatherbless2/XRiskJudge`，因此不会再指向未发布的旧风控仓库。
+输出中的每个子模块前都不应出现 `-` 或 `+`，并应与上表提交一致。根仓库的 `.gitmodules` 已统一使用已发布的 `Weatherbless2` fork，不再指向只存在于某台机器上的本地提交。
 
 ### 配置和敏感信息
 
