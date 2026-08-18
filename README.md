@@ -63,7 +63,15 @@ git status --short
 
 ## 运行界面
 
-![vn.py 交易工作台](docs/images/vnpy-trading-workbench.png)
+交易工作台采用“顶部状态栏 + 左侧功能菜单 + 右侧独立页面”。总览、行情、下单、账户、委托、回测和策略页面按需切换，避免把实时交易和研究结果堆在同一个窗口。
+
+![总览](docs/images/vnpy-trading-workbench.png)
+
+![行情中心](docs/images/vnpy-trading-market.png)
+
+![交易下单](docs/images/vnpy-trading-order.png)
+
+![策略回测](docs/images/vnpy-trading-backtest.png)
 
 ![BusinessAdmin 业务后台](docs/images/business-admin-securities.png)
 
@@ -155,7 +163,7 @@ DISPLAY=:0 ./build/QtAdmin_0.1.0
 | --- | --- | --- |
 | 交易工作台 | vn.py 窗口 | 左侧证券列表、实时行情、K 线、五档、资金、持仓、委托、成交 |
 | 快速委托 | 交易工作台右侧 | 选择当前证券后填写价格和数量，买入/卖出会经过 C++ 风控 |
-| 策略回测 | 交易工作台底部“策略回测” | 选择日期和均线参数，查看收益率、回撤、夏普和成交明细 |
+| 策略回测 | 交易工作台左侧“策略回测” | 选择日期和均线参数，查看收益率、回撤、夏普和成交明细 |
 | 证券主数据 | 浏览器 `19080` | 查看版本、证券范围、买入权限、停牌和价格单位 |
 | 交易对账 | 后台左侧“交易对账” | 查看 ATP 资金、持仓、委托、成交和重连恢复记录 |
 
