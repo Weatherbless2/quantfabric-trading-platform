@@ -9,17 +9,17 @@ QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台
 这是单仓库（Monorepo）版本：所有交易模块都是主仓库中的普通目录，不再使用 Git 子模块或 fork 链路。为了保证所有开发者拿到完全一致的版本，请使用发布标签克隆：
 
 ```bash
-git clone --branch v2026.08.18-monorepo git@github.com:Weatherbless2/quantfabric-trading-platform.git
+git clone --branch v2026.08.18-monorepo-final git@github.com:Weatherbless2/quantfabric-trading-platform.git
 cd quantfabric-trading-platform
 ```
 
-如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次单仓库最终版本时，必须使用上面的 `v2026.08.18-monorepo` 标签。
+如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次单仓库最终版本时，必须使用上面的 `v2026.08.18-monorepo-final` 标签。
 
 本次导入的模块来源提交如下，提交仅用于追溯来源；代码已经直接纳入主仓库：
 
 | 模块目录 | 导入来源提交 | 用途 |
 | --- | --- | --- |
-| 根仓库发布标签 | `v2026.08.18-monorepo` | 平台总工程和全部模块版本锁定 |
+| 根仓库发布标签 | `v2026.08.18-monorepo-final` | 平台总工程和全部模块版本锁定 |
 | `XWatcher` | `a2ef0f7c2901b8e2a35e759da209f2b9005206ce` | 监控和交易数据转发 |
 | `XServer` | `2f63b78c0e48664fc70a08099d94c871043905d8` | 会话、请求转发和服务端业务编排 |
 | `XTrader` | `9ef8b1ac9a59a6582cb3b5764577b3d7e58261dc` | 交易业务处理和 ATP 柜台适配 |
