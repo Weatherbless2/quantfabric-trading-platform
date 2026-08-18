@@ -1,6 +1,6 @@
 [submodule "XWatcher"]
 	path = XWatcher
-	url = git@github.com:QuantFabric/XWatcher.git
+	url = git@github.com:Weatherbless2/XWatcher.git
 [submodule "XTrader"]
 	path = XTrader
 	url = git@github.com:Weatherbless2/XTrader.git
@@ -12,19 +12,19 @@
 	url = git@github.com:Weatherbless2/XRiskJudge.git
 [submodule "XMonitor"]
 	path = XMonitor
-	url = git@github.com:QuantFabric/XMonitor.git
+	url = git@github.com:Weatherbless2/XMonitor.git
 [submodule "XMarketCenter"]
 	path = XMarketCenter
 	url = git@github.com:Weatherbless2/XMarketCenter.git
 [submodule "XAPI"]
 	path = XAPI
-	url = git@github.com:QuantFabric/XAPI.git
+	url = git@github.com:Weatherbless2/XAPI.git
 [submodule "Utils"]
 	path = Utils
-	url = git@github.com:QuantFabric/Utils.git
+	url = git@github.com:Weatherbless2/Utils.git
 [submodule "SHMServer"]
 	path = SHMServer
-	url = git@github.com:QuantFabric/SHMServer.git
+	url = git@github.com:Weatherbless2/SHMServer.git
 [submodule "XQuant"]
 	path = XQuant
-	url = git@github.com:QuantFabric/XQuant.git
+	url = git@github.com:Weatherbless2/XQuant.git
