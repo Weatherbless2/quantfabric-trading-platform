@@ -4,6 +4,40 @@ QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台
 当前环境使用 PyTdx 实时行情、ClickHouse 历史分钟 K 线和 ATP 测试柜台（账户
 `610000071840`）。
 
+## 当前发布版本
+
+根仓库 `main` 已锁定可复现的交易端版本。其他开发者请使用递归克隆：
+
+```bash
+git clone --recurse-submodules git@github.com:Weatherbless2/quantfabric-trading-platform.git
+cd quantfabric-trading-platform
+git submodule update --init --recursive
+```
+
+本次发布的关键子模块提交如下：
+
+| 子模块 | 发布提交 | 用途 |
+| --- | --- | --- |
+| `XServer` | `2f63b78c0e48664fc70a08099d94c871043905d8` | 会话、请求转发和服务端业务编排 |
+| `XTrader` | `9ef8b1ac9a59a6582cb3b5764577b3d7e58261dc` | 交易业务处理和 ATP 柜台适配 |
+| `XRiskJudge` | `2cd183151fb43ed2fcfef3a0fe46783a24845eb1` | 账户容量、流控、撤单和异常交易风控 |
+
+递归克隆会从 `Weatherbless2` 下的对应子模块获取这些提交，不依赖本机已有的旧目录或旧分支。验收时可执行：
+
+```bash
+git -C XServer rev-parse HEAD
+git -C XTrader rev-parse HEAD
+git -C XRiskJudge rev-parse HEAD
+```
+
+输出应分别与上表提交一致。根仓库的 `.gitmodules` 已使用 `Weatherbless2/XRiskJudge`，因此不会再指向未发布的旧风控仓库。
+
+### 配置和敏感信息
+
+- 数据库、行情 SDK、ATP 账号和本地运行配置只应放在本地配置文件中，不提交到 Git。
+- `表结构/` 中的解压 SQL 未提交，因为其中包含明文数据库密码；根目录的 `01init_tables.rar` 仅作为初始化原始包保留。
+- 使用初始化脚本前，请先检查并替换本机数据库账号、密码和连接地址；不要把新的明文密码提交到仓库。
+
 ## 项目模块
 
 | 模块 | 所在层 | 用通俗的话理解 | 主要入口 |
