@@ -1,0 +1,63 @@
+#include "ServerEngine.h"
+#include "YMLConfig.hpp"
+#include <curl/curl.h>
+#include <stdio.h>
+
+void printHelp()
+{
+    printf("Usage:  XServer -f ~/config.yml -d\n");
+    printf("\t-f: Config File Path\n");
+    printf("\t-a: Account\n");
+    printf("\t-d: log debug mode, print debug log\n");
+    printf("\t-h: print help infomartion\n");
+}
+
+int main(int argc, char *argv[])
+{
+    if(curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
+    {
+        fprintf(stderr, "failed to initialize libcurl\n");
+        return 1;
+    }
+    std::string configPath = "./config.yml";
+    int ch;
+    bool debug = false;
+    while ((ch = getopt(argc, argv, "f:a:dh")) != -1)
+    {
+        switch (ch)
+        {
+        case 'f':
+            configPath = optarg;
+            break;
+        case 'a':
+            break;
+        case 'd':
+            debug = true;
+            break;
+        case 'h':
+        case '?':
+        case ':':
+        default:
+            printHelp();
+            exit(-1);
+            break;
+        }
+    }
+    std::string app_log_path;
+    char* p = getenv("APP_LOG_PATH");
+    if(p == NULL)
+    {
+        app_log_path = "./log/";
+    }
+    else
+    {
+        app_log_path = p;
+    }
+    FMTLog::Logger::Init(app_log_path, "XServer");
+    FMTLog::Logger::SetDebugLevel(debug);
+    ServerEngine engine;
+    engine.LoadConfig(configPath.c_str());
+    engine.Run();
+    curl_global_cleanup();
+    return 0;
+}

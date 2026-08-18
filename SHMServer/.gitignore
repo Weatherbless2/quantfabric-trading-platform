@@ -1,0 +1,5 @@
+/build
+/tests/log
+/tests/build/
+/*.log
+/pybind11/build

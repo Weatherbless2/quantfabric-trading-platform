@@ -1,0 +1,72 @@
+TickerList:                             
+  -
+    TickerIndex: 0
+    Ticker: AP606
+    ExchangeID: CZCE
+    PriceTick: 1
+    
+  -
+    TickerIndex: 1
+    Ticker: AP609
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 2
+    Ticker: CF606
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 3
+    Ticker: CF609
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 4
+    Ticker: SR606
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 5
+    Ticker: SR609
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 6
+    Ticker: TA606
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 7
+    Ticker: TA609
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 8
+    Ticker: UR606
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 9
+    Ticker: UR609
+    ExchangeID: CZCE
+    PriceTick: 1
+
+  -
+    TickerIndex: 10
+    Ticker: RM606
+    ExchangeID: CZCE
+    PriceTick: 1
+    
+  -
+    TickerIndex: 11
+    Ticker: RM609
+    ExchangeID: CZCE
+    PriceTick: 1

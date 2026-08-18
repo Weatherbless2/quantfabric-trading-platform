@@ -6,21 +6,20 @@ QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台
 
 ## 当前发布版本
 
-根仓库通过 gitlink 固定每一个子模块的提交。为了保证所有开发者拿到完全一致的版本，请使用发布标签递归克隆：
+这是单仓库（Monorepo）版本：所有交易模块都是主仓库中的普通目录，不再使用 Git 子模块或 fork 链路。为了保证所有开发者拿到完全一致的版本，请使用发布标签克隆：
 
 ```bash
-git clone --branch v2026.08.18-final --recurse-submodules git@github.com:Weatherbless2/quantfabric-trading-platform.git
+git clone --branch v2026.08.18-monorepo git@github.com:Weatherbless2/quantfabric-trading-platform.git
 cd quantfabric-trading-platform
-git submodule update --init --recursive
 ```
 
-如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次最终版本时，必须使用上面的 `v2026.08.18-final` 标签。
+如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次单仓库最终版本时，必须使用上面的 `v2026.08.18-monorepo` 标签。
 
-本次发布的根仓库和全部子模块提交如下：
+本次导入的模块来源提交如下，提交仅用于追溯来源；代码已经直接纳入主仓库：
 
-| 子模块 | 发布提交 | 用途 |
+| 模块目录 | 导入来源提交 | 用途 |
 | --- | --- | --- |
-| 根仓库发布标签 | `v2026.08.18-final` | 平台总工程和全部子模块版本锁定 |
+| 根仓库发布标签 | `v2026.08.18-monorepo` | 平台总工程和全部模块版本锁定 |
 | `XWatcher` | `a2ef0f7c2901b8e2a35e759da209f2b9005206ce` | 监控和交易数据转发 |
 | `XServer` | `2f63b78c0e48664fc70a08099d94c871043905d8` | 会话、请求转发和服务端业务编排 |
 | `XTrader` | `9ef8b1ac9a59a6582cb3b5764577b3d7e58261dc` | 交易业务处理和 ATP 柜台适配 |
@@ -32,17 +31,15 @@ git submodule update --init --recursive
 | `SHMServer` | `227f1e6201e4709967fede1ab4818067112aa52a` | 共享内存通信 |
 | `XQuant` | `0eef8ca232538a396de405a21d21d8000d2840b9` | 客户端协议和量化接口 |
 
-递归克隆会从 `Weatherbless2` 下的对应 fork 获取这些提交，不依赖本机已有的旧目录或旧分支。验收时可执行：
+上述目录已经是主仓库普通文件，后续修改 `XServer`、`XTrader`、`XRiskJudge` 等模块时，直接在主仓库提交即可。验收时可执行：
 
 ```bash
 git rev-parse HEAD
 git submodule status --recursive
-git -C XServer rev-parse HEAD
-git -C XTrader rev-parse HEAD
-git -C XRiskJudge rev-parse HEAD
+git status --short
 ```
 
-输出中的每个子模块前都不应出现 `-` 或 `+`，并应与上表提交一致。根仓库的 `.gitmodules` 已统一使用已发布的 `Weatherbless2` fork，不再指向只存在于某台机器上的本地提交。
+`git submodule status --recursive` 不应输出任何内容，仓库中也不存在 `.gitmodules`。以后只需要 `git pull`、修改代码、`git add`、`git commit` 和 `git push`，不再需要初始化子模块、同步 fork 或更新 gitlink。
 
 ### 配置和敏感信息
 
@@ -101,7 +98,6 @@ flowchart TD
 在仓库根目录执行一次：
 
 ```bash
-git submodule update --init --recursive
 sudo apt-get update
 sudo apt-get install -y build-essential cmake curl sqlite3 python3-dev python3-venv \
   qtbase5-dev qt5-qmake

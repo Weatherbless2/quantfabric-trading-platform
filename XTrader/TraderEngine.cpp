@@ -1,0 +1,702 @@
+#include "TraderEngine.h"
+#include "OrderTrace.hpp"
+
+
+TraderEngine::TraderEngine() : m_RequestMessageQueue(1 << 12), m_ReportMessageQueue(1 << 12)
+{
+    m_HPPackClient = NULL;
+    m_RiskClient = NULL;
+    m_pOrderServer = NULL;
+    m_TradeGateWay = NULL;
+}
+
+void TraderEngine::LoadConfig(const std::string& path)
+{
+    std::string errorString;
+    if(!Utils::LoadXTraderConfig(path.c_str(), m_XTraderConfig, errorString))
+    {
+        FMTLOG(fmtlog::WRN, "TraderEngine::LoadXTraderConfig {} failed, {}",  path, errorString);
+    }
+    else
+    {
+        FMTLOG(fmtlog::INF, "TraderEngine::LoadXTraderConfig {} successed", path);
+        FMTLOG(fmtlog::INF, "LoadXTraderConfig Product:{} BrokerID:{} Account:{} AppID:{} AuthCode:{}", 
+                m_XTraderConfig.Product, m_XTraderConfig.BrokerID, m_XTraderConfig.Account, m_XTraderConfig.AppID, m_XTraderConfig.AuthCode);
+        FMTLOG(fmtlog::INF, "LoadXTraderConfig ServerIP:{} Port:{} OpenTime:{} CloseTime:{}", 
+                m_XTraderConfig.ServerIP, m_XTraderConfig.Port, m_XTraderConfig.OpenTime, m_XTraderConfig.CloseTime);
+        FMTLOG(fmtlog::INF, "LoadXTraderConfig TickerListPath:{} ErrorPath:{}",  m_XTraderConfig.TickerListPath, m_XTraderConfig.ErrorPath);    
+        FMTLOG(fmtlog::INF, "LoadXTraderConfig RiskServerName:{} OrderServerName:{} TraderAPI:{}",
+                m_XTraderConfig.RiskServerName, m_XTraderConfig.OrderServerName, m_XTraderConfig.TraderAPI);
+    }
+    m_OpenTime = Utils::getTimeStampMs(m_XTraderConfig.OpenTime.c_str());
+    m_CloseTime = Utils::getTimeStampMs(m_XTraderConfig.CloseTime.c_str());
+}
+
+void TraderEngine::SetCommand(const std::string& cmd)
+{
+    m_Command = cmd;
+    FMTLOG(fmtlog::INF, "TraderEngine::SetCommand cmd:{}", m_Command);
+}
+
+void TraderEngine::LoadTradeGateWay(const std::string& soPath)
+{
+    std::string errorString;
+    m_TradeGateWay = XPluginEngine<TradeGateWay>::LoadPlugin(soPath, errorString);
+    if(NULL == m_TradeGateWay)
+    {
+        FMTLOG(fmtlog::ERR, "TraderEngine::LoadTradeGateWay {} failed, {}", soPath, errorString);
+        sleep(1);
+        exit(-1);
+    }
+    else
+    {
+        FMTLOG(fmtlog::INF, "TraderEngine::LoadTradeGateWay {} successed", soPath);
+        m_TradeGateWay->SetTraderConfig(m_XTraderConfig);
+    }
+}
+
+void TraderEngine::Run()
+{
+    FMTLOG(fmtlog::INF, "TraderEngine::Run RiskServer:{} OrderServer:{}", 
+            m_XTraderConfig.RiskServerName, m_XTraderConfig.OrderServerName);
+    // Connect to XWatcher
+    RegisterClient(m_XTraderConfig.ServerIP.c_str(), m_XTraderConfig.Port);
+    sleep(1);
+    // 连接 XRiskJudge 提供的共享内存风控服务。需要风控的订单先写到这里。
+    m_RiskClient = new SHMIPC::SHMConnection<Message::PackMessage, ClientConf>(m_XTraderConfig.Account);
+    m_RiskClient->Start(m_XTraderConfig.RiskServerName);
+    FMTLOG(fmtlog::INF, "TraderEngine::Run connect to RiskServer:{} {}", 
+            m_XTraderConfig.RiskServerName, m_RiskClient->IsConnected());
+    // 为当前账户创建报单/回报共享内存服务，XQuant 使用 "OrderServerName + Account" 连接。
+    FMTLOG(fmtlog::INF, "TraderEngine::Run Start OrderServer:{}", 
+            m_XTraderConfig.OrderServerName + m_XTraderConfig.Account);
+    m_pOrderServer = new OrderServer();
+    m_pOrderServer->Start(m_XTraderConfig.OrderServerName + m_XTraderConfig.Account, m_XTraderConfig.CPUSET.at(1));
+    sleep(1);
+    // Update App Status
+    InitAppStatus();
+    // 交易插件封装实际柜台 API；它只会在风控通过后收到报单或撤单请求。
+    m_TradeGateWay->CreateTraderAPI();
+    // 登录交易网关
+    m_TradeGateWay->LoadTrader();
+    // 查询Order、Trade、Fund、Position信息
+    m_TradeGateWay->Qry();
+    sleep(1);
+    m_pWorkThread = new std::thread(&TraderEngine::WorkFunc, this);
+    m_pMonitorThread = new std::thread(&TraderEngine::HelperFunc, this);
+
+    m_RiskClient->Join();
+    m_pOrderServer->Join();
+    m_pWorkThread->join();
+    m_pMonitorThread->join();
+}
+
+void TraderEngine::WorkFunc()
+{
+    bool ret = Utils::ThreadBind(pthread_self(), m_XTraderConfig.CPUSET.at(0));
+    FMTLOG(fmtlog::INF, "TraderEngine::WorkFunc WorkThread Running CPU:{} ret:{}", m_XTraderConfig.CPUSET.at(0), ret);
+    while(true)
+    {
+        // 1. 从 OrderServer 收策略报单/撤单，并保留来源 ChannelID。
+        HandleOrderFromQuant();
+        // 2. 根据 RiskStatus 决定送 XRiskJudge 还是直接调用交易插件。
+        HandleRequestMessage();
+        // 3. 收到风控结果后，只有通过的请求才会送入交易插件。
+        HandleRiskResponse();
+        // 4. 处理柜台订单、资金、持仓回报，并同步给风控和监控队列。
+        HandleExecuteReport();
+        // 5. 按之前保存的 ChannelID 将回报精确回送给发单策略。
+        SendReportToQuant();
+    }
+}
+
+void TraderEngine::HelperFunc()
+{
+    FMTLOG(fmtlog::INF, "TraderEngine::HelperFunc MonitorThread Running");
+    // 风控初始化检查
+    InitRiskCheck();
+    Message::PackMessage msg;
+    while(true)
+    {
+        // 从客户端读取报单、撤单请求并写入请求队列
+        ReadRequestFromClient();
+        bool ret = m_MonitorMessageQueue.Pop(msg);
+        if(ret)
+        {
+            SendMonitorMessage(msg);
+        }
+        unsigned long CurrentTimeStamp = Utils::getTimeMs();
+        static unsigned long PreTimeStamp = CurrentTimeStamp / 1000;
+        if(PreTimeStamp < CurrentTimeStamp / 1000)
+        {
+            PreTimeStamp = CurrentTimeStamp / 1000;
+        }
+        if(PreTimeStamp % 5 == 0)
+        {
+            m_HPPackClient->ReConnect();
+            if(m_XTraderConfig.QryFund)
+            {
+                m_TradeGateWay->ReqQryFund();
+                PreTimeStamp += 1;
+            }
+        }
+    }
+}
+
+
+void TraderEngine::RegisterClient(const char *ip, unsigned int port)
+{
+    m_HPPackClient = new HPPackClient(ip, port);
+    m_HPPackClient->Start();
+    Message::TLoginRequest login;
+    login.ClientType = Message::EClientType::EXTRADER;
+    strncpy(login.Account, m_XTraderConfig.Account.c_str(), sizeof(login.Account));
+    m_HPPackClient->Login(login);
+}
+
+
+void TraderEngine::HandleOrderFromQuant()
+{
+    static Message::PackMessage message;
+    while(true)
+    {
+        uint64_t start = Utils::getTimeUs();
+        bool ok = m_pOrderServer->Pop(message);
+        if(ok)
+        {
+            int32_t EngineID = -1;
+            if(Message::EMessageType::EOrderRequest == message.MessageType)
+            {
+                EngineID = message.OrderRequest.EngineID;
+                FMTLOG(fmtlog::INF,
+                       "TraceID={} Stage=XTraderReceive Account={} Ticker={} OrderToken={} RiskStatus={} Price={} Volume={} ChannelID={}",
+                       Utils::OrderTraceID(message.OrderRequest.Account, message.OrderRequest.OrderToken),
+                       message.OrderRequest.Account, message.OrderRequest.Ticker,
+                       message.OrderRequest.OrderToken, message.OrderRequest.RiskStatus,
+                       message.OrderRequest.Price, message.OrderRequest.Volume, message.ChannelID);
+            }
+            else if(Message::EMessageType::EActionRequest == message.MessageType)
+            {
+                EngineID = message.ActionRequest.EngineID;
+                FMTLOG(fmtlog::DBG, "TraderEngine::HandleOrderFromQuant Account:{} OrderRef:{} ExchangeID:{} EngineID:{} RiskID:{} RiskStatus:{} {:#X}", 
+                        message.ActionRequest.Account, message.ActionRequest.OrderRef, message.ActionRequest.ExchangeID, 
+                        message.ActionRequest.EngineID, message.ActionRequest.RiskID, message.ActionRequest.RiskStatus, 
+                        message.MessageType);
+            }
+            // ChannelID 是共享内存客户端通道标识。保存 EngineID -> ChannelID 映射，
+            // 后续订单回报才能回到发起该请求的策略实例。
+            m_StrategyChannelMap[EngineID] = message.ChannelID;
+            while(!m_RequestMessageQueue.Push(message));
+            uint64_t end = Utils::getTimeUs();
+            FMTLOG(fmtlog::INF, "TraderEngine::HandleOrderFromQuant recv msg from ChannelID:{} Latency:{}us", message.ChannelID, end - start);
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+void TraderEngine::ReadRequestFromClient()
+{
+    while(true)
+    {
+        static Message::PackMessage message;
+        bool ok = m_HPPackClient->m_PackMessageQueue.Pop(message);
+        if(ok)
+        {
+            switch(message.MessageType)
+            {
+                case Message::EMessageType::EOrderRequest:
+                {
+                    FMTLOG(fmtlog::INF,
+                           "TraceID={} Stage=XTraderReceive Account={} Ticker={} OrderToken={} RiskStatus={} Source=XWatcher",
+                           Utils::OrderTraceID(message.OrderRequest.Account, message.OrderRequest.OrderToken),
+                           message.OrderRequest.Account, message.OrderRequest.Ticker,
+                           message.OrderRequest.OrderToken, message.OrderRequest.RiskStatus);
+                    while(!m_RequestMessageQueue.Push(message));
+                    break;
+                }
+                case Message::EMessageType::EActionRequest:
+                {
+                    while(!m_RequestMessageQueue.Push(message));
+                    break;
+                }
+                case Message::EMessageType::ECommand:
+                    HandleCommand(message);
+                    break;
+                default:
+                {
+                    FMTLOG(fmtlog::WRN, "TraderEngine::ReadRequestFromClient Unkown Message Type:{:#X}", message.MessageType);
+                    break;
+                }
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+void TraderEngine::HandleRequestMessage()
+{
+    // 风控路由：EPREPARE_CHECKED/ECHECK_INIT 交给 XRiskJudge；
+    // ENOCHECKED 才允许绕过风控直接进入交易插件。
+    while(true)
+    {
+        uint64_t start = Utils::getTimeUs();
+        static Message::PackMessage request;
+        bool ok = m_RequestMessageQueue.Pop(request);
+        if(ok)
+        {
+            switch(request.MessageType)
+            {
+                case Message::EMessageType::EOrderRequest:
+                {
+                    request.OrderRequest.BusinessType = m_XTraderConfig.BusinessType;
+                    if(request.OrderRequest.RiskStatus == Message::ERiskStatusType::EPREPARE_CHECKED)
+                    {
+                        SendRiskCheckReqeust(request);
+                    }
+                    else if(request.OrderRequest.RiskStatus == Message::ERiskStatusType::ENOCHECKED)
+                    {
+                        SendRequest(request);
+                    }
+                    else if(request.OrderRequest.RiskStatus == Message::ERiskStatusType::ECHECK_INIT)
+                    {
+                        SendRiskCheckReqeust(request);
+                    }
+                    break;
+                }
+                case Message::EMessageType::EActionRequest:
+                {
+                    if(request.ActionRequest.RiskStatus == Message::ERiskStatusType::EPREPARE_CHECKED)
+                    {
+                        SendRiskCheckReqeust(request);
+                    }
+                    else if(request.ActionRequest.RiskStatus == Message::ERiskStatusType::ENOCHECKED)
+                    {
+                        SendRequest(request);
+                    }
+                    break;
+                }
+                default:
+                {
+                    FMTLOG(fmtlog::WRN, "TraderEngine::HandleRequestMessage Unkown Message Type:{:#X}", request.MessageType);
+                    break;
+                }
+            }
+            uint64_t end = Utils::getTimeUs();
+            FMTLOG(fmtlog::DBG, "TraderEngine::HandleRequestMessage Latency:{}us", end - start);
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+void TraderEngine::HandleRiskResponse()
+{
+    static Message::PackMessage message;
+    m_RiskClient->HandleMsg();
+    // XRiskJudge 返回原始订单/撤单消息，并更新其 RiskStatus。
+    // SendRequest 内部据此决定执行柜台请求还是生成拒单回报。
+    while(true)
+    {
+        uint64_t start = Utils::getTimeUs();
+        bool ok = m_RiskClient->Pop(message);
+        if(ok)
+        {
+            switch(message.MessageType)
+            {
+                case Message::EMessageType::EOrderRequest:
+                {
+                    const bool passed = message.OrderRequest.RiskStatus == Message::ERiskStatusType::ECHECKED_PASS;
+                    if(passed)
+                    {
+                        FMTLOG(fmtlog::INF,
+                               "TraceID={} Stage=XTraderRiskResponse Result=PASS Account={} Ticker={} OrderToken={} RiskID={} ErrorID={}",
+                               Utils::OrderTraceID(message.OrderRequest.Account, message.OrderRequest.OrderToken),
+                               message.OrderRequest.Account, message.OrderRequest.Ticker,
+                               message.OrderRequest.OrderToken, message.OrderRequest.RiskID,
+                               message.OrderRequest.ErrorID);
+                    }
+                    else
+                    {
+                        FMTLOG(fmtlog::WRN,
+                               "TraceID={} Stage=XTraderRiskResponse Result=REJECT Account={} Ticker={} OrderToken={} RiskID={} ErrorID={}",
+                               Utils::OrderTraceID(message.OrderRequest.Account, message.OrderRequest.OrderToken),
+                               message.OrderRequest.Account, message.OrderRequest.Ticker,
+                               message.OrderRequest.OrderToken, message.OrderRequest.RiskID,
+                               message.OrderRequest.ErrorID);
+                    }
+                    SendRequest(message);
+                    break;
+                }
+                case Message::EMessageType::EActionRequest:
+                {
+                    SendRequest(message);
+                    break;
+                }
+                case Message::EMessageType::ERiskReport:
+                {
+                    m_MonitorMessageQueue.Push(message);
+                    break;
+                }
+                default:
+                {
+                    FMTLOG(fmtlog::WRN, "TraderEngine::HandleRiskResponse Unkown Message Type:{:#X}", message.MessageType);
+                    break;
+                }
+            }
+            uint64_t end = Utils::getTimeUs();
+            FMTLOG(fmtlog::INF, "TraderEngine::HandleRiskResponse recv msg from ChannelID:{} Latency:{}us", message.ChannelID, end - start);
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+void TraderEngine::HandleExecuteReport()
+{
+    // 柜台回报需要三路扇出：
+    // 1) 送 XRiskJudge 更新撤单计数和挂单状态；2) 回送策略；3) 发送监控链路。
+    while(true)
+    {
+        uint64_t start = Utils::getTimeUs();
+        static Message::PackMessage report;
+        // 从交易网关回报队列取出消息
+        bool ok = m_TradeGateWay->m_ReportMessageQueue.Pop(report);
+        if(ok)
+        {
+            switch(report.MessageType)
+            {
+                case Message::EMessageType::EOrderStatus:
+                {
+                    m_RiskClient->Push(report);
+                    m_RiskClient->HandleMsg();
+                    m_ReportMessageQueue.Push(report);
+                    m_MonitorMessageQueue.Push(report);
+
+                    break;
+                }
+                case Message::EMessageType::EAccountFund:
+                {
+                    m_RiskClient->Push(report);
+                    m_RiskClient->HandleMsg();
+                    m_ReportMessageQueue.Push(report);
+                    m_MonitorMessageQueue.Push(report);
+                    m_pOrderServer->UpdateAccountFund(report);
+                    break;
+                }
+                case Message::EMessageType::EAccountPosition:
+                {
+                    m_RiskClient->Push(report);
+                    m_RiskClient->HandleMsg();
+                    m_ReportMessageQueue.Push(report);
+                    m_MonitorMessageQueue.Push(report);
+                    m_pOrderServer->UpdateAccountPosition(report);
+                    break;
+                }
+                case Message::EMessageType::EEventLog:
+                {
+                    m_MonitorMessageQueue.Push(report);
+                    break;
+                }
+                default:
+                {
+                    FMTLOG(fmtlog::WRN, "TraderEngine::HandleExcuteReport Unkown Message Type:{:#X}", report.MessageType);
+                    break;
+                }
+                uint64_t end = Utils::getTimeUs();
+                FMTLOG(fmtlog::DBG, "TraderEngine::HandleExcuteReport Latency:{}us", end - start);
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+void TraderEngine::HandleCommand(const Message::PackMessage& msg)
+{
+    if(Message::EBusinessType::ESTOCK ==  m_XTraderConfig.BusinessType)
+    {
+        if(Message::ECommandType::ETRANSFER_FUND_IN == msg.Command.CmdType)
+        {
+            std::string Command = msg.Command.Command;
+            std::vector<std::string> vec;
+            Utils::Split(Command, ":", vec);
+            if(vec.size() >= 2)
+            {
+                double Amount = atof(vec.at(1).c_str());
+                m_TradeGateWay->TransferFundIn(Amount);
+            }
+            else
+            {
+                FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid TransferFundIn Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+            }
+        }
+        else if(Message::ECommandType::ETRANSFER_FUND_OUT == msg.Command.CmdType)
+        {
+            std::string Command = msg.Command.Command;
+            std::vector<std::string> vec;
+            Utils::Split(Command, ":", vec);
+            if(vec.size() >= 2)
+            {
+                double Amount = atof(vec.at(1).c_str());
+                m_TradeGateWay->TransferFundOut(Amount);
+            }
+            else
+            {
+                FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid TransferFundOut Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+            }
+        }
+        else 
+        {
+            FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+        }
+    }
+    else if(Message::EBusinessType::ECREDIT ==  m_XTraderConfig.BusinessType)
+    {
+        if(Message::ECommandType::ETRANSFER_FUND_IN == msg.Command.CmdType)
+        {
+            std::string Command = msg.Command.Command;
+            std::vector<std::string> vec;
+            Utils::Split(Command, ":", vec);
+            if(vec.size() >= 2)
+            {
+                double Amount = atof(vec.at(1).c_str());
+                m_TradeGateWay->TransferFundIn(Amount);
+            }
+            else
+            {
+                FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid TransferFundIn Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+            }
+        }
+        else if(Message::ECommandType::ETRANSFER_FUND_OUT == msg.Command.CmdType)
+        {
+            std::string Command = msg.Command.Command;
+            std::vector<std::string> vec;
+            Utils::Split(Command, ":", vec);
+            if(vec.size() >= 2)
+            {
+                double Amount = atof(vec.at(1).c_str());
+                m_TradeGateWay->TransferFundOut(Amount);
+            }
+            else
+            {
+                FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid TransferFundOut Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+            }
+        }
+        else if(Message::ECommandType::EREPAY_MARGIN_DIRECT == msg.Command.CmdType)
+        {
+            std::string Command = msg.Command.Command;
+            std::vector<std::string> vec;
+            Utils::Split(Command, ":", vec);
+            if(vec.size() >= 2)
+            {
+                double Amount = atof(vec.at(1).c_str());
+                m_TradeGateWay->RepayMarginDirect(Amount);
+            }
+            else
+            {
+                FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid RepayMarginDirect Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+            }
+        }
+        else 
+        {
+            FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+        }
+    }
+    else 
+    {
+        FMTLOG(fmtlog::WRN, "TraderEngine::HandleCommand Account:{} invalid Command:{}", m_XTraderConfig.Account, msg.Command.Command);
+    }
+}
+
+void TraderEngine::SendReportToQuant()
+{
+    while(true)
+    {
+        uint64_t start = Utils::getTimeUs();
+        static Message::PackMessage report;
+        bool ok = m_ReportMessageQueue.Pop(report);
+        if(ok)
+        {
+            if(Message::EMessageType::EOrderStatus == report.MessageType && report.OrderStatus.EngineID > 0)
+            {
+                auto it = m_StrategyChannelMap.find(report.OrderStatus.EngineID);
+                if(it != m_StrategyChannelMap.end())
+                {
+                    // 用发单时保留的通道定向回报，避免所有策略都收到无关订单状态。
+                    report.ChannelID = it->second;
+                    m_pOrderServer->Push(report);
+                }
+            }
+            else if(Message::EMessageType::EAccountFund == report.MessageType)
+            {
+                for(auto it = m_StrategyChannelMap.begin(); it != m_StrategyChannelMap.end(); it++)
+                {
+                    report.ChannelID = it->second;
+                    m_pOrderServer->Push(report); 
+                }
+            }
+            else if(Message::EMessageType::EAccountPosition == report.MessageType)
+            {
+                for(auto it = m_StrategyChannelMap.begin(); it != m_StrategyChannelMap.end(); it++)
+                {
+                    report.ChannelID = it->second;
+                    m_pOrderServer->Push(report); 
+                }
+            }
+            uint64_t end = Utils::getTimeUs();
+            FMTLOG(fmtlog::DBG, "TraderEngine::SendReportToQuant Latency:{}us", end - start);
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+void TraderEngine::SendRequest(Message::PackMessage& request)
+{
+    m_TradeGateWay->SendRequest(request);
+}
+
+void TraderEngine::SendRiskCheckReqeust(const Message::PackMessage& request)
+{
+    // 写入 RiskServer 后立即驱动一次消息处理，降低请求在本地缓冲中的停留时间。
+    m_RiskClient->Push(request);
+    m_RiskClient->HandleMsg();
+}
+
+void TraderEngine::SendMonitorMessage(const Message::PackMessage& message)
+{
+    switch(message.MessageType)
+    {
+        case Message::EMessageType::EOrderStatus:
+        {
+            m_HPPackClient->SendData((const unsigned char*)&message, sizeof(message));
+            break;
+        }
+        case Message::EMessageType::EEventLog:
+        {
+            m_HPPackClient->SendData((const unsigned char*)&message, sizeof(message));
+            break;
+        }
+        case Message::EMessageType::ERiskReport:
+        {
+            m_HPPackClient->SendData((const unsigned char*)&message, sizeof(message));
+            break;
+        }
+        case Message::EMessageType::EAccountFund:
+        {
+            m_HPPackClient->SendData((const unsigned char*)&message, sizeof(message));
+            break;
+        }
+        case Message::EMessageType::EAccountPosition:
+        {
+            m_HPPackClient->SendData((const unsigned char*)&message, sizeof(message));
+            break;
+        }
+        default:
+        {
+            FMTLOG(fmtlog::WRN, "TraderEngine::SendMonitorMessage Unkown Message Type:{:#X}", message.MessageType);
+            break;
+        }
+    }
+}
+
+void TraderEngine::InitRiskCheck()
+{
+    Message::PackMessage message;
+    memset(&message, 0, sizeof(message));
+    message.MessageType = Message::EMessageType::EOrderRequest;
+    message.OrderRequest.Price = 0.0;
+    message.OrderRequest.Volume = 0;
+    message.OrderRequest.RiskStatus = Message::ERiskStatusType::ECHECK_INIT;
+    strncpy(message.OrderRequest.Broker, m_XTraderConfig.Broker.c_str(), sizeof(message.OrderRequest.Broker));
+    strncpy(message.OrderRequest.Account, m_XTraderConfig.Account.c_str(), sizeof(message.OrderRequest.Account));
+    message.OrderRequest.OrderType = Message::EOrderType::ELIMIT;
+    message.OrderRequest.Direction = Message::EOrderDirection::EBUY;
+    message.OrderRequest.Offset = Message::EOrderOffset::EOPEN;
+    m_RequestMessageQueue.Push(message);
+}
+
+bool TraderEngine::IsTrading()const
+{
+    return m_Trading;
+}
+
+void TraderEngine::CheckTrading()
+{
+    m_CurrentTimeStamp = Utils::getTimeStampMs(Utils::getCurrentTimeMs() + 11);
+    m_Trading  = (m_CurrentTimeStamp >= m_OpenTime && m_CurrentTimeStamp <= m_CloseTime);
+}
+
+void TraderEngine::InitAppStatus()
+{
+    Message::PackMessage message;
+    message.MessageType = Message::EMessageType::EAppStatus;
+    UpdateAppStatus(m_Command, message.AppStatus);
+    m_HPPackClient->SendData((const unsigned char*)&message, sizeof(message));
+}
+
+void TraderEngine::UpdateAppStatus(const std::string& cmd, Message::TAppStatus& AppStatus)
+{
+    FMTLOG(fmtlog::INF, "TraderEngine::UpdateAppStatus cmd:{}", cmd);
+    std::vector<std::string> ItemVec;
+    Utils::Split(cmd, " ", ItemVec);
+    std::string Account;
+    for(int i = 0; i < ItemVec.size(); i++)
+    {
+        if(Utils::equalWith(ItemVec.at(i), "-a"))
+        {
+            Account = ItemVec.at(i + 1);
+            break;
+        }
+    }
+    strncpy(AppStatus.Account, Account.c_str(), sizeof(AppStatus.Account));
+
+    std::vector<std::string> Vec;
+    Utils::Split(ItemVec.at(0), "/", Vec);
+    FMTLOG(fmtlog::INF, "TraderEngine::UpdateAppStatus {}", Vec.size());
+    std::string AppName = Vec.at(Vec.size() - 1);
+    strncpy(AppStatus.AppName, AppName.c_str(), sizeof(AppStatus.AppName));
+    AppStatus.PID = getpid();
+    strncpy(AppStatus.Status, "Start", sizeof(AppStatus.Status));
+
+    std::string AppLogPath;
+    char* p = getenv("APP_LOG_PATH");
+    if(p == NULL)
+    {
+        AppLogPath = "./log/";
+    }
+    else
+    {
+        AppLogPath = p;
+    }
+    fmt::format_to_n(AppStatus.StartScript, sizeof(AppStatus.StartScript), "nohup {} > {}/{}_{}_run.log 2>&1 &", cmd, AppLogPath, AppName, AppStatus.Account);
+    std::string SoCommitID;
+    std::string SoUtilsCommitID;
+    m_TradeGateWay->GetCommitID(SoCommitID, SoUtilsCommitID);
+    std::string CommitID = std::string(APP_COMMITID) + ":" + SoCommitID + ":" + SHMSERVER_COMMITID;
+    strncpy(AppStatus.CommitID, CommitID.c_str(), sizeof(AppStatus.CommitID));
+    std::string UtilsCommitID = std::string(UTILS_COMMITID) + ":" + SoUtilsCommitID;
+    strncpy(AppStatus.UtilsCommitID, UtilsCommitID.c_str(), sizeof(AppStatus.UtilsCommitID));
+    std::string APIVersion;
+    m_TradeGateWay->GetAPIVersion(APIVersion);
+    strncpy(AppStatus.APIVersion, APIVersion.c_str(), sizeof(AppStatus.APIVersion));
+    strncpy(AppStatus.StartTime, Utils::getCurrentTimeUs(), sizeof(AppStatus.StartTime));
+    strncpy(AppStatus.LastStartTime, Utils::getCurrentTimeUs(), sizeof(AppStatus.LastStartTime));
+    strncpy(AppStatus.UpdateTime, Utils::getCurrentTimeUs(), sizeof(AppStatus.UpdateTime));
+    FMTLOG(fmtlog::INF, "TraderEngine::UpdateAppStatus AppCommitID:{} AppUtilsCommitID:{} SoCommitID:{} SoUtilsCommitID:{} SHMServerCommitID:{} CMD:{}",
+            APP_COMMITID, UTILS_COMMITID, SoCommitID, SoUtilsCommitID, SHMSERVER_COMMITID, AppStatus.StartScript);
+}
