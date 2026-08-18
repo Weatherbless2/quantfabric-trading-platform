@@ -1,5 +1,7 @@
 import json
+from io import BytesIO
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from VnpyMonitor.backtest import BacktestLoader, BacktestParameters
@@ -35,6 +37,16 @@ class BacktestLoaderTest(unittest.TestCase):
         self.assertEqual(request.get_header("X-qf-session-id"), "a" * 30)
         self.assertEqual(json.loads(request.data)["symbol"], "300007")
         self.assertEqual(loaded, [{"bars": 42}])
+
+    def test_http_validation_detail_is_shown_to_the_operator(self) -> None:
+        error = HTTPError(
+            "http://127.0.0.1:18082/v1/backtests", 422, "invalid", {},
+            BytesIO(b'{"detail":"fast window must be smaller than slow window"}'),
+        )
+        self.assertEqual(
+            BacktestLoader._http_error_message(error),
+            "快均线必须小于慢均线",
+        )
 
 
 if __name__ == "__main__":

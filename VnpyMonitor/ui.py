@@ -56,6 +56,20 @@ QMainWindow, #central { background: #111820; }
 #operationRiskWait { color: #f0c074; background: #4a3921; border: 1px solid #83612d; border-radius: 3px; padding: 4px 8px; }
 #backtestMetric { color: #8095a7; }
 #backtestMetricValue { color: #edf2f7; font-weight: 700; }
+#backtestHeader { background: #151f2a; border: 1px solid #293846; border-radius: 4px; }
+#backtestEyebrow { color: #d94f49; font-size: 11px; font-weight: 700; }
+#backtestTitle { color: #f2f6fa; font-size: 18px; font-weight: 700; }
+#backtestSubtitle { color: #8297a8; }
+#backtestSummary { color: #dbe5ee; font-weight: 600; }
+#backtestCard { background: #18232e; border: 1px solid #2b3d4c; border-radius: 4px; }
+#backtestCardLabel { color: #8398a9; font-size: 11px; }
+#backtestCardValue { color: #edf2f7; font-size: 16px; font-weight: 700; }
+#backtestCardValuePositive { color: #f15b54; font-size: 16px; font-weight: 700; }
+#backtestCardValueNegative { color: #25bd8a; font-size: 16px; font-weight: 700; }
+#backtestSectionTitle { color: #edf2f7; font-size: 13px; font-weight: 700; }
+#backtestEmpty { color: #718697; padding: 18px; }
+#backtestRunButton { background: #c94442; border-color: #e35e58; color: #ffffff; font-weight: 700; padding-left: 22px; padding-right: 22px; }
+#backtestRunButton:hover { background: #e85d56; }
 #panel { background: #171f28; border: 1px solid #293846; border-radius: 3px; }
 #panelTitle { font-size: 13px; font-weight: 700; color: #edf2f7; }
 #quoteSymbol { font-size: 17px; font-weight: 700; color: #edf2f7; }
@@ -731,17 +745,22 @@ class BacktestCurveWidget(pg.PlotWidget):
         self.setBackground("#171f28")
         self.showGrid(x=True, y=True, alpha=0.18)
         self.setTitle("策略收益与回撤", color="#edf2f7", size="10pt")
-        self.setLabel("left", "比例 (%)")
+        self.setLabel("left", "收益 / 回撤 (%)")
         self.setLabel("bottom", "交易时间")
         self.getAxis("left").setPen(pg.mkPen("#53697a"))
         self.getAxis("left").setTextPen(pg.mkPen("#a7b7c3"))
+        self.getAxis("left").enableAutoSIPrefix(False)
         self.getAxis("bottom").setPen(pg.mkPen("#53697a"))
         self.getAxis("bottom").setTextPen(pg.mkPen("#a7b7c3"))
         self.addLegend(offset=(8, 8))
         self.return_line = self.plot([], [], name="累计收益率", pen=pg.mkPen("#d94f49", width=2))
         self.drawdown_line = self.plot([], [], name="回撤率", pen=pg.mkPen("#25bd8a", width=2))
+        self.empty_text = pg.TextItem("运行回测后显示收益与回撤曲线", color="#718697", anchor=(0.5, 0.5))
+        self.addItem(self.empty_text)
+        self.empty_text.setPos(0, 0)
 
     def set_points(self, points: list[dict]) -> None:
+        points = points or []
         x_values = []
         for index, point in enumerate(points):
             try:
@@ -754,6 +773,28 @@ class BacktestCurveWidget(pg.PlotWidget):
         drawdowns = [float(point.get("drawdown", 0)) * 100 for point in points]
         self.return_line.setData(x_values, returns)
         self.drawdown_line.setData(x_values, drawdowns)
+        self.empty_text.setVisible(not points)
+        if points:
+            self.empty_text.setPos(x_values[len(x_values) // 2], 0)
+
+    def clear_points(self) -> None:
+        self.set_points([])
+
+
+def _backtest_card(label: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel]:
+    """Create a compact metric card and return its value label for updates."""
+    card = QtWidgets.QFrame()
+    card.setObjectName("backtestCard")
+    layout = QtWidgets.QVBoxLayout(card)
+    layout.setContentsMargins(10, 8, 10, 8)
+    layout.setSpacing(3)
+    title = QtWidgets.QLabel(label)
+    title.setObjectName("backtestCardLabel")
+    value = QtWidgets.QLabel("--")
+    value.setObjectName("backtestCardValue")
+    layout.addWidget(title)
+    layout.addWidget(value)
+    return card, value
 
 
 class BacktestPanel(QtWidgets.QWidget):
@@ -798,12 +839,46 @@ class BacktestPanel(QtWidgets.QWidget):
         self.capital.setSingleStep(100_000)
         self.capital.setValue(1_000_000)
         self.capital.setSuffix(" 元")
+        self.universe_combo = QtWidgets.QComboBox()
+        self.universe_combo.setMinimumWidth(185)
+        self.universe_combo.setToolTip("从证券主数据选择回测标的；也可以直接输入 6 位代码")
+        self.universe_combo.setEditable(True)
+        self.universe_combo.lineEdit().setPlaceholderText("选择证券主数据")
+        self.universe_combo.currentIndexChanged.connect(self._universe_symbol_changed)
         self.run_button = QtWidgets.QPushButton("运行回测")
+        self.run_button.setObjectName("backtestRunButton")
         self.run_button.clicked.connect(self.run_backtest)
         self.status = QtWidgets.QLabel("等待回测服务")
         self.status.setObjectName("statusOffline")
         self.curve = BacktestCurveWidget()
         self.curve.setMinimumHeight(145)
+        self.curve.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                                 QtWidgets.QSizePolicy.Policy.Expanding)
+
+        self.result_symbol = QtWidgets.QLabel("等待运行")
+        self.result_symbol.setObjectName("backtestTitle")
+        self.result_range = QtWidgets.QLabel("请选择参数并运行一次只读历史回测")
+        self.result_range.setObjectName("backtestSubtitle")
+        self.result_source = QtWidgets.QLabel("数据源 --")
+        self.result_source.setObjectName("backtestSummary")
+        self.result_state = QtWidgets.QLabel("未运行")
+        self.result_state.setObjectName("statusOffline")
+
+        self.metric_values: dict[str, QtWidgets.QLabel] = {}
+        cards_layout = QtWidgets.QGridLayout()
+        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setHorizontalSpacing(6)
+        cards_layout.setVerticalSpacing(6)
+        card_specs = (
+            ("final_equity", "期末权益"), ("return_rate", "区间收益率"),
+            ("annualized_return", "年化收益率"), ("max_drawdown_rate", "最大回撤率"),
+            ("sharpe_ratio", "夏普比率"), ("win_rate", "胜率"),
+            ("trades", "成交笔数"), ("total_cost", "交易成本"),
+        )
+        for index, (key, label) in enumerate(card_specs):
+            card, value = _backtest_card(label)
+            self.metric_values[key] = value
+            cards_layout.addWidget(card, index // 4, index % 4)
 
         form = QtWidgets.QGridLayout()
         form.setContentsMargins(10, 8, 10, 5)
@@ -822,9 +897,11 @@ class BacktestPanel(QtWidgets.QWidget):
         for label, widget, row, column in fields:
             form.addWidget(QtWidgets.QLabel(label), row, column)
             form.addWidget(widget, row, column + 1)
-        form.addWidget(self.use_current_button, 0, 8)
+        form.addWidget(self.universe_combo, 0, 8)
         form.addWidget(self.run_button, 1, 8)
 
+        # Keep the detailed table as a compatibility/debug surface; cards are
+        # the primary presentation for a trader reviewing a report.
         self.metric_table = QtWidgets.QTableWidget(0, 2)
         self.metric_table.setHorizontalHeaderLabels(["指标", "结果"])
         self.metric_table.verticalHeader().hide()
@@ -842,36 +919,64 @@ class BacktestPanel(QtWidgets.QWidget):
         self.trade_table.setAlternatingRowColors(True)
         self.trade_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.trade_table.horizontalHeader().setStretchLastSection(True)
+        self.trade_table.setMinimumHeight(78)
 
-        result_layout = QtWidgets.QHBoxLayout()
-        result_layout.setContentsMargins(10, 0, 10, 8)
-        result_layout.setSpacing(8)
-        metrics_panel = QtWidgets.QWidget()
-        metrics_panel.setObjectName("panel")
-        metrics_layout = QtWidgets.QVBoxLayout(metrics_panel)
-        metrics_layout.setContentsMargins(8, 8, 8, 8)
-        metrics_title = QtWidgets.QLabel("回测结果")
-        metrics_title.setObjectName("panelTitle")
-        metrics_layout.addWidget(metrics_title)
-        metrics_layout.addWidget(self.metric_table)
+        summary_panel = QtWidgets.QFrame()
+        summary_panel.setObjectName("backtestHeader")
+        summary_layout = QtWidgets.QHBoxLayout(summary_panel)
+        summary_layout.setContentsMargins(14, 10, 14, 10)
+        summary_layout.setSpacing(10)
+        summary_text = QtWidgets.QVBoxLayout()
+        eyebrow = QtWidgets.QLabel("策略回测 / HISTORICAL RESEARCH")
+        eyebrow.setObjectName("backtestEyebrow")
+        summary_text.addWidget(eyebrow)
+        summary_text.addWidget(self.result_symbol)
+        summary_text.addWidget(self.result_range)
+        summary_layout.addLayout(summary_text, 1)
+        summary_layout.addWidget(self.result_source)
+        summary_layout.addWidget(self.result_state)
+
         trades_panel = QtWidgets.QWidget()
         trades_panel.setObjectName("panel")
         trades_layout = QtWidgets.QVBoxLayout(trades_panel)
         trades_layout.setContentsMargins(8, 8, 8, 8)
+        trades_header = QtWidgets.QHBoxLayout()
         trades_title = QtWidgets.QLabel("成交明细")
-        trades_title.setObjectName("panelTitle")
-        trades_layout.addWidget(trades_title)
+        trades_title.setObjectName("backtestSectionTitle")
+        self.trades_count = QtWidgets.QLabel("共 0 笔")
+        self.trades_count.setObjectName("backtestSubtitle")
+        trades_header.addWidget(trades_title)
+        trades_header.addStretch()
+        trades_header.addWidget(self.trades_count)
+        trades_layout.addLayout(trades_header)
         trades_layout.addWidget(self.trade_table)
-        result_layout.addWidget(metrics_panel, 2)
-        result_layout.addWidget(trades_panel, 5)
+        trades_panel.setMinimumHeight(112)
+        self.metric_table.setVisible(False)
 
+        config_page = QtWidgets.QWidget()
+        config_layout = QtWidgets.QVBoxLayout(config_page)
+        config_layout.setContentsMargins(0, 0, 0, 0)
+        config_layout.addLayout(form)
+        config_layout.addStretch(1)
+
+        result_page = QtWidgets.QWidget()
+        result_layout = QtWidgets.QVBoxLayout(result_page)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(6)
+        result_layout.addWidget(summary_panel)
+        result_layout.addLayout(cards_layout)
+        result_layout.addWidget(self.curve, 2)
+        result_layout.addWidget(trades_panel, 1)
+
+        self.page_tabs = QtWidgets.QTabWidget()
+        self.page_tabs.addTab(config_page, "参数配置")
+        self.page_tabs.addTab(result_page, "结果分析")
+        self.page_tabs.setDocumentMode(True)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.addLayout(form)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(5)
         layout.addWidget(self.status)
-        layout.addWidget(self.curve)
-        layout.addLayout(result_layout, 1)
+        layout.addWidget(self.page_tabs, 1)
 
         self.signal_loaded.connect(self._show_result)
         self.signal_failed.connect(self._show_error)
@@ -894,6 +999,33 @@ class BacktestPanel(QtWidgets.QWidget):
         index = self.exchange_combo.findData(exchange)
         if index >= 0:
             self.exchange_combo.setCurrentIndex(index)
+        for row in range(self.universe_combo.count()):
+            if self.universe_combo.itemData(row) == vt_symbol:
+                self.universe_combo.blockSignals(True)
+                self.universe_combo.setCurrentIndex(row)
+                self.universe_combo.blockSignals(False)
+                break
+
+    def set_security_universe(self, securities: list[dict]) -> None:
+        """Expose every CK-backed security in the research selector."""
+        self.universe_combo.blockSignals(True)
+        try:
+            self.universe_combo.clear()
+            for item in securities:
+                ticker = str(item.get("ticker", "")).strip()
+                exchange = str(item.get("exchange", "")).strip()
+                if len(ticker) != 6 or exchange not in {"SSE", "SZSE"}:
+                    continue
+                name = str(item.get("name", "")).strip() or ticker
+                self.universe_combo.addItem(f"{ticker}  {name} · {exchange}", f"{ticker}.{exchange}")
+        finally:
+            self.universe_combo.blockSignals(False)
+        self.set_symbol(self.current_vt_symbol)
+
+    def _universe_symbol_changed(self, index: int) -> None:
+        vt_symbol = self.universe_combo.itemData(index)
+        if isinstance(vt_symbol, str) and "." in vt_symbol:
+            self.set_symbol(vt_symbol)
 
     def _use_current_symbol(self) -> None:
         self.set_symbol(self.current_vt_symbol)
@@ -930,6 +1062,8 @@ class BacktestPanel(QtWidgets.QWidget):
             capital=float(self.capital.value()),
         )
         self.run_button.setEnabled(False)
+        self._clear_result()
+        self.page_tabs.setCurrentIndex(0)
         self._set_status("正在读取历史数据并运行回测", False)
         thread, worker = start_backtest_load(
             service_url, session_id, parameters,
@@ -948,6 +1082,14 @@ class BacktestPanel(QtWidgets.QWidget):
 
     def _show_result(self, result: dict) -> None:
         self.curve.set_points(result.get("equity_curve", []))
+        symbol = str(result.get("config", {}).get("symbol", self.symbol_edit.text()))
+        exchange = str(result.get("config", {}).get("exchange", self.exchange_combo.currentData()))
+        self.result_symbol.setText(f"{symbol}.{exchange} · 均线交叉策略")
+        config = result.get("config", {})
+        start = str(config.get("start", self.start_date.date().toString("yyyy-MM-dd")))[:10]
+        end = str(config.get("end", self.end_date.date().toString("yyyy-MM-dd")))[:10]
+        self.result_range.setText(f"{start} 至 {end}  ·  {int(config.get('interval', self.interval_combo.currentData()))} 分钟 K 线")
+        self.result_source.setText(f"数据源  {result.get('source', '--')}")
         metrics = (
             ("数据源", str(result.get("source", "--"))),
             ("K 线数量", f"{int(result.get('bars', 0)):,}"),
@@ -968,6 +1110,19 @@ class BacktestPanel(QtWidgets.QWidget):
             item = QtWidgets.QTableWidgetItem(value)
             item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             self.metric_table.setItem(row, 1, item)
+
+        values = {
+            "final_equity": self._money(result.get("final_equity", 0)),
+            "return_rate": self._percent(result.get("return_rate", 0)),
+            "annualized_return": self._percent(result.get("annualized_return", 0)),
+            "max_drawdown_rate": self._percent(self._max_drawdown_rate(result)),
+            "sharpe_ratio": f"{float(result.get('sharpe_ratio', 0)):.2f}",
+            "win_rate": self._percent(result.get("win_rate", 0)),
+            "trades": f"{len(result.get('trades', [])):,} 笔",
+            "total_cost": self._money(result.get("total_cost", 0)),
+        }
+        for key, value in values.items():
+            self.metric_values[key].setText(value)
 
         trades = result.get("trades", [])
         self.trade_table.setUpdatesEnabled(False)
@@ -997,10 +1152,38 @@ class BacktestPanel(QtWidgets.QWidget):
                     self.trade_table.setItem(row, column, item)
         finally:
             self.trade_table.setUpdatesEnabled(True)
-        self._set_status(f"回测完成：{int(result.get('bars', 0)):,} 根 K 线，{len(trades):,} 笔成交", True)
+        self.trades_count.setText(f"共 {len(trades):,} 笔")
+        bars = int(result.get("bars", 0))
+        if bars <= 0:
+            self.result_state.setText("无有效数据")
+            self.result_state.setObjectName("statusOffline")
+            self._set_status("指定区间没有有效 K 线，请调整标的或日期", False)
+        else:
+            self.result_state.setText("已完成")
+            self.result_state.setObjectName("statusOnline")
+            self._set_status(f"回测完成：{bars:,} 根 K 线，{len(trades):,} 笔成交", True)
+        self.page_tabs.setCurrentIndex(1)
+        self.result_state.style().unpolish(self.result_state)
+        self.result_state.style().polish(self.result_state)
 
     def _show_error(self, detail: str) -> None:
+        self._clear_result()
+        self.page_tabs.setCurrentIndex(0)
         self._set_status(f"回测失败：{detail}", False)
+
+    def _clear_result(self) -> None:
+        self.curve.clear_points()
+        self.result_symbol.setText("等待运行")
+        self.result_range.setText("请选择参数并运行一次只读历史回测")
+        self.result_source.setText("数据源 --")
+        self.result_state.setText("未运行")
+        self.result_state.setObjectName("statusOffline")
+        self.result_state.style().unpolish(self.result_state)
+        self.result_state.style().polish(self.result_state)
+        for value in self.metric_values.values():
+            value.setText("--")
+        self.trades_count.setText("共 0 笔")
+        self.trade_table.setRowCount(0)
 
     def _set_status(self, text: str, ready: bool) -> None:
         self.status.setText(text)
@@ -1144,6 +1327,7 @@ class WorkbenchWindow(QtWidgets.QMainWindow):
         )
         self._hide_monitor_columns(self.trade_monitor, {"gateway_name"})
         self.backtest_panel = BacktestPanel(self._backtest_service_setting)
+        self.backtest_panel.set_security_universe(self.securities)
         self.backtest_panel.set_symbol(self.selected_vt_symbol)
         self.security_panel = SecurityUniversePanel(self.securities, self._select_security_row)
         self.security_table = self.security_panel.table

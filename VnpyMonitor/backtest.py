@@ -56,9 +56,27 @@ class BacktestLoader(QtCore.QObject):
                 raise ValueError("invalid backtest response")
             self.loaded.emit(payload)
         except HTTPError as exc:
-            self.failed.emit(f"回测服务拒绝请求（HTTP {exc.code}）")
+            self.failed.emit(self._http_error_message(exc))
         except (URLError, OSError, ValueError) as exc:
             self.failed.emit(f"回测服务不可用：{exc}")
+
+    @staticmethod
+    def _http_error_message(exc: HTTPError) -> str:
+        """Prefer the service's validation detail over an opaque status code."""
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+            detail = payload.get("detail") if isinstance(payload, dict) else None
+        except (OSError, UnicodeDecodeError, ValueError):
+            detail = None
+        translations = {
+            "end date must not be earlier than start date": "结束日期不能早于开始日期",
+            "fast window must be smaller than slow window": "快均线必须小于慢均线",
+            "unsupported interval": "不支持的 K 线周期",
+            "backtest data source unavailable": "历史数据源暂不可用",
+        }
+        if isinstance(detail, str) and detail:
+            return translations.get(detail, detail)
+        return f"回测服务拒绝请求（HTTP {exc.code}）"
 
 
 def start_backtest_load(service_url: str, session_id: str,
