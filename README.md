@@ -1,25 +1,24 @@
 # QuantFabric Trading Platform
 
 QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台组成的量化交易平台。
-当前环境使用 PyTdx 实时行情、ClickHouse 历史分钟 K 线和 ATP 测试柜台（账户
-`610000071840`）。
+当前环境使用 PyTdx 实时行情、ClickHouse 历史分钟 K 线和 ATP 测试柜台；柜台账号和连接参数仅通过本地配置提供。
 
 ## 当前发布版本
 
 这是单仓库（Monorepo）版本：所有交易模块都是主仓库中的普通目录，不再使用 Git 子模块或 fork 链路。为了保证所有开发者拿到完全一致的版本，请使用发布标签克隆：
 
 ```bash
-git clone --branch v2026.08.18-monorepo-final git@github.com:Weatherbless2/quantfabric-trading-platform.git
+git clone --branch v2026.08.18-monorepo-final.1 git@github.com:Weatherbless2/quantfabric-trading-platform.git
 cd quantfabric-trading-platform
 ```
 
-如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次单仓库最终版本时，必须使用上面的 `v2026.08.18-monorepo-final` 标签。
+如果只执行不带 `--branch` 的普通 clone，Git 会获取当时 `main` 分支指向的版本；需要复现本次单仓库最终版本时，必须使用上面的 `v2026.08.18-monorepo-final.1` 标签。
 
 本次导入的模块来源提交如下，提交仅用于追溯来源；代码已经直接纳入主仓库：
 
 | 模块目录 | 导入来源提交 | 用途 |
 | --- | --- | --- |
-| 根仓库发布标签 | `v2026.08.18-monorepo-final` | 平台总工程和全部模块版本锁定 |
+| 根仓库发布标签 | `v2026.08.18-monorepo-final.1` | 平台总工程和全部模块版本锁定 |
 | `XWatcher` | `a2ef0f7c2901b8e2a35e759da209f2b9005206ce` | 监控和交易数据转发 |
 | `XServer` | `2f63b78c0e48664fc70a08099d94c871043905d8` | 会话、请求转发和服务端业务编排 |
 | `XTrader` | `9ef8b1ac9a59a6582cb3b5764577b3d7e58261dc` | 交易业务处理和 ATP 柜台适配 |
@@ -148,7 +147,7 @@ DISPLAY=:0 ./build/QtAdmin_0.1.0
 ```
 
 业务后台也可直接用浏览器访问：<http://127.0.0.1:19080/>。
-本地开发账号为 `admin / 123456`。
+本地管理员由 `AuthAdminService` 的开发配置初始化；首次启动后应立即设置本地管理员密码。
 
 ### 启动后看什么
 
