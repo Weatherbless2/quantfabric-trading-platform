@@ -1,52 +1,44 @@
 # QuantFabric Trading Platform
 
-本仓库包含两个协同运行的系统：
+QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台组成的量化交易平台。
+当前环境使用 PyTdx 实时行情、ClickHouse 历史分钟 K 线和 ATP 测试柜台（账户
+`610000071840`）。
 
-- 交易系统：vn.py Qt 工作台通过进程内 quantfabric_native C++ 扩展连接
-  XServer、XRiskJudge、XTrader 和 ATP 测试柜台。
-- 后台管理系统：BusinessAdminService 管理市场、产品、资产单元、资金账户、证券主数据、
-  版本发布和审计；C++ 核心只读取已发布版本。
+## 模块与链路
 
-当前使用 PyTdx 实时行情、ClickHouse 历史分钟 K 线和 ATP 测试柜台。公司实时行情 SDK 尚未接入。
+| 模块 | 作用 |
+| --- | --- |
+| `VnpyMonitor` | vn.py Qt 交易工作台：行情、K 线、资金、持仓、委托、成交和回测 |
+| `BusinessAdminService` | 证券、产品、资金账户、权限、版本发布和审计 |
+| `XServer → XRiskJudge → XTrader` | C++ 会话、风控和订单链路 |
+| `XMarketCenter` / `PyTdxBridge` | 实时行情接入与发布 |
+| `HistoryDataService` / `BacktestService` | ClickHouse 历史数据和只读策略回测 |
+
+```mermaid
+flowchart LR
+    Admin[BusinessAdmin] -->|发布规则| Server[XServer]
+    Vnpy[vn.py 工作台] <-->|原生 PackMessage| Server
+    PyTdx[PyTdx] --> Market[XMarketCenter] --> Server
+    Server --> Risk[XRiskJudge] --> Trader[XTrader] --> ATP[ATP 测试柜台]
+    CK[ClickHouse] --> History[HistoryDataService] --> Vnpy
+    History --> Backtest[BacktestService] --> Vnpy
+```
 
 ## 运行界面
 
-### 交易工作台
+![vn.py 交易工作台](docs/images/vnpy-trading-workbench.png)
 
-![vn.py 交易工作台运行截图](docs/images/vnpy-trading-workbench.png)
+![BusinessAdmin 业务后台](docs/images/business-admin-securities.png)
 
-交易端提供证券搜索、按需订阅、五档行情、K 线、资金、持仓、委托、成交和限价委托入口；
-顶部状态栏同步展示柜台可用资金、账户权益、持仓标的数和交易会话状态。
+## 首次安装与构建
 
-### SQL 业务字段后台
+在仓库根目录执行一次：
 
-![BusinessAdmin 证券主数据运行截图](docs/images/business-admin-securities.png)
-
-后台按 market、fundinfo、projectacct、fundacct、fundacctlink 和 stkinfo 等 SQL 表的业务含义
-建模。截图展示已发布版本 13 的 5,205 只证券，以及买入权限、最小价格单位和停牌字段。
-
-## 架构
-
-~~~mermaid
-flowchart LR
-    Admin[BusinessAdminService] -->|发布配置| XServer
-    Vnpy[vn.py 交易工作台] --> Native[quantfabric_native]
-    Native <--> XServer
-    PyTdx[PyTdx 实时行情] --> Market[XMarketCenter] --> Watcher[XWatcher]
-    XServer --> Watcher --> Risk[XRiskJudge] --> Trader[XTrader]
-    Trader <--> ATP[ATP SDK / AGW 测试柜台]
-    ClickHouse[ClickHouse 分钟K线] --> History[HistoryDataService] --> Vnpy
-    History --> Backtest[BacktestService] --> Vnpy
-~~~
-
-## 首次构建
-
-在 WSL Ubuntu 仓库根目录执行一次：
-
-~~~bash
+```bash
 git submodule update --init --recursive
 sudo apt-get update
-sudo apt-get install -y build-essential cmake curl sqlite3 python3-dev python3-venv qtbase5-dev qt5-qmake
+sudo apt-get install -y build-essential cmake curl sqlite3 python3-dev python3-venv \
+  qtbase5-dev qt5-qmake
 
 python3 -m venv .auth-venv
 .auth-venv/bin/python -m pip install -r AuthAdminService/requirements.txt
@@ -57,93 +49,69 @@ python3 -m venv .vnpy-venv
 ./runtime/setup-bridges.sh
 ./runtime/prepare.sh
 cmake -S . -B build -DPython3_EXECUTABLE="$PWD/.vnpy-venv/bin/python"
-cmake --build build --target XServer_0.9.0 XWatcher_0.6.0 XRiskJudge_0.9.3 XTrader_0.9.3 XMarketCenter_0.9.3 XQuant_0.1.0 QtAdmin_0.1.0 quantfabric_native -j"$(nproc)"
-~~~
+cmake --build build --target \
+  XServer_0.9.0 XWatcher_0.6.0 XRiskJudge_0.9.3 XTrader_0.9.3 \
+  XMarketCenter_0.9.3 XQuant_0.1.0 QtAdmin_0.1.0 quantfabric_native \
+  -j"$(nproc)"
+```
 
-## 启动
+## 启动完整项目
 
-### 完整交易系统
+先启动 C++ 交易链路（ATP 测试账户，订单权限已开启）：
 
-~~~bash
-./runtime/prepare.sh
+```bash
 ./runtime/start.sh
-DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
-~~~
+```
 
-start.sh 会启动权限后台、业务后台、ATP、PyTdx、C++ 行情、风控、交易和策略服务。
-交易客户端登录后可从左侧选择证券；实时行情按需订阅，不会启动时全量轮询。
+历史行情和回测服务需要本机 ClickHouse 只读配置：
 
-### 单独后台管理系统
-
-~~~bash
-./runtime/prepare.sh
-./runtime/start-business-admin.sh
-~~~
-
-浏览器打开 http://127.0.0.1:19080/。开发账号为 admin，密码为 123456。
-后台的证券主数据页可使用“一键切换买入并发布”：服务端复制当前版本、修改单个证券、
-校验后发布，同时写入审计。
-
-### 历史 K 线与回测
-
-配置本机只读 ClickHouse 凭据后启动历史服务：
-
-~~~bash
+```bash
 cp runtime/config/HistoryData.env.example runtime/config/HistoryData.env
+# 编辑 HistoryData.env，填写 QF_HISTORY_CLICKHOUSE_USERNAME/PASSWORD
 ./runtime/start-history-data.sh
 ./runtime/start-backtest-service.sh
-export QF_HISTORY_URL=http://127.0.0.1:18081
-~~~
+```
 
-`QF_HISTORY_URL` 只对当前终端及其子进程生效，因此需要在同一个终端中再启动交易客户端：
+启动两个桌面端：
 
-~~~bash
+```bash
 DISPLAY=:0 .vnpy-venv/bin/python -m VnpyMonitor.app
-~~~
+DISPLAY=:0 ./build/QtAdmin_0.1.0
+```
 
-回测只读取历史数据，不会连接 ATP 或发送委托：
+业务后台也可直接用浏览器访问：<http://127.0.0.1:19080/>。
+本地开发账号为 `admin / 123456`。
 
-~~~bash
-./runtime/backtest.sh --symbol 600000 --exchange SSE --start 2026-03-11 --end 2026-08-11 --interval 5 --fast 10 --slow 30
-~~~
+停止全部运行服务：
 
-停止完整链路：
-
-~~~bash
+```bash
 ./runtime/stop.sh
-~~~
+```
 
-## 联调说明
+## 常用验证
 
-后台发布证券规则后，XServer 会在刷新周期内热加载。交易端下单始终经过
-XServer -> XWatcher -> XRiskJudge -> XTrader -> ATP SDK。关闭某证券的买入权限后，
-该证券买单会被 XServer 拒绝；其他已发布证券规则不受影响。
+```bash
+curl http://127.0.0.1:18080/healthz   # 权限服务
+curl http://127.0.0.1:19080/healthz   # 业务后台
+curl http://127.0.0.1:18081/readyz    # 历史行情
+curl http://127.0.0.1:18082/readyz    # 回测服务
+```
 
-ATP 桥在运行目录维护两类本地追加日志：`atp-order-intents.jsonl` 用于跨重启拒绝
-重复 `OrderToken`，`atp-reconciliation.jsonl` 记录柜台资金、持仓、委托、成交和恢复状态。
-业务后台“交易对账”页只读展示后者，不写业务配置库。vn.py 端也会为柜台回报中的新增成交量
-生成标准成交事件，避免重复显示恢复查询得到的累计成交。
+vn.py 的“策略回测”页可选择证券、日期、K 线周期、均线参数和初始资金，展示收益曲线、
+回撤曲线、收益率、最大回撤、夏普比率及成交明细。命令行回测示例：
 
-当前证券范围由 PyTdx 主数据与 ClickHouse 历史数据交集生成：
+```bash
+./runtime/backtest.sh --symbol 600000 --exchange SSE \
+  --start 2026-03-11 --end 2026-08-11 --interval 5 --fast 10 --slow 30
+```
 
-~~~bash
-./runtime/sync-ck-security-master.sh
-~~~
-
-该命令只发布证券配置，不发送 ATP 委托。
+回测只读取 ClickHouse，不连接 ATP，也不会发送委托。
 
 ## 当前边界
 
-- 实时行情：PyTdx；接入公司 SDK 时替换 XMarketCenter 行情适配层。
-- 历史数据：ClickHouse tdxdata.stkprice_1min。
-- 交易柜台：ATP 测试账户；重连后自动重登并查询资金、持仓、当日委托和成交。
-- 待接入：公司实时行情字段映射、生产柜台准入和断线恢复压测。
-- 运行配置、数据库、日志、SDK 与账户凭据均为本机文件，不提交 Git。
+- 实时行情：当前为 PyTdx；接入公司行情 SDK 时替换 `XMarketCenter` 适配层。
+- 交易：ATP 测试柜台，委托仍经过业务规则、XServer 和 XRiskJudge。
+- 配置、数据库、日志、SDK 和账号凭据均为本机文件，不提交 Git。
 
-## 相关文档
-
-- [运行脚本说明](runtime/README.md)
-- [后台管理系统](BusinessAdminService/README.md)
-- [历史数据服务](HistoryDataService/README.md)
-- [回测服务](BacktestService/README.md)
-- [目标架构](doc/architecture/TargetArchitecture.md)
+更多细节见：[运行说明](runtime/README.md)、[后台管理](BusinessAdminService/README.md)、
+[历史数据](HistoryDataService/README.md)、[回测服务](BacktestService/README.md)。
