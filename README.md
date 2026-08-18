@@ -4,31 +4,51 @@ QuantFabric 是一个由 C++ 交易核心、vn.py 交易工作台和业务后台
 当前环境使用 PyTdx 实时行情、ClickHouse 历史分钟 K 线和 ATP 测试柜台（账户
 `610000071840`）。
 
-## 模块与链路
+## 项目模块
 
-| 模块 | 作用 |
-| --- | --- |
-| `VnpyMonitor` | vn.py Qt 交易工作台：行情、K 线、资金、持仓、委托、成交和回测 |
-| `BusinessAdminService` | 证券、产品、资金账户、权限、版本发布和审计 |
-| `XServer → XRiskJudge → XTrader` | C++ 会话、风控和订单链路 |
-| `XMarketCenter` / `PyTdxBridge` | 实时行情接入与发布 |
-| `HistoryDataService` / `BacktestService` | ClickHouse 历史数据和只读策略回测 |
+| 模块 | 所在层 | 用通俗的话理解 | 主要入口 |
+| --- | --- | --- | --- |
+| `VnpyMonitor` | 交易前端 | 看行情、看 K 线、查资金持仓、手工下单、运行回测 | `python -m VnpyMonitor.app` |
+| `BusinessAdminService` | 业务后台 | 管理证券、产品、资产单元、资金账户、版本和审计 | `http://127.0.0.1:19080/` |
+| `AuthAdminService` | 权限中心 | 登录、角色和 Casbin 操作权限 | `http://127.0.0.1:18080/` |
+| `XServer` / `XWatcher` | C++ 会话层 | 接收客户端请求、转发消息、监控运行状态 | `runtime/start.sh` |
+| `XRiskJudge` | C++ 风控层 | 在订单到柜台前检查账户、证券和风险规则 | `runtime/start.sh` |
+| `XTrader` / `ATPBridge` | C++ 交易层 | 把标准订单发给 ATP，并把委托、成交回报带回来 | `runtime/start.sh` |
+| `XMarketCenter` / `PyTdxBridge` | C++ 行情层 | 接收实时行情，转换成统一行情消息 | `runtime/start.sh` |
+| `HistoryDataService` / `BacktestService` | 数据研究层 | 从 ClickHouse 取历史 K 线，计算收益、回撤和成交 | `18081` / `18082` |
 
-```mermaid
-flowchart LR
-    Admin[BusinessAdmin] -->|发布规则| Server[XServer]
-    Vnpy[vn.py 工作台] <-->|原生 PackMessage| Server
-    PyTdx[PyTdx] --> Market[XMarketCenter] --> Server
-    Server --> Risk[XRiskJudge] --> Trader[XTrader] --> ATP[ATP 测试柜台]
-    CK[ClickHouse] --> History[HistoryDataService] --> Vnpy
-    History --> Backtest[BacktestService] --> Vnpy
-```
+## 一张图看懂架构
 
 ## 运行界面
 
 ![vn.py 交易工作台](docs/images/vnpy-trading-workbench.png)
 
 ![BusinessAdmin 业务后台](docs/images/business-admin-securities.png)
+
+![QuantFabric 系统架构](docs/images/quantfabric-architecture.svg)
+
+## 一条链路看懂业务
+
+```mermaid
+flowchart TD
+    A[后台登录] --> B[编辑证券和账户规则]
+    B --> C[校验并发布版本]
+    C --> D[XServer 热加载已发布规则]
+    E[vn.py 登录] --> F[选择证券并订阅行情]
+    F --> G[行情进入 K 线和五档]
+    G --> H[手工委托]
+    H --> I[权限校验]
+    I --> J[XRiskJudge 风控]
+    J --> K[XTrader -> ATP]
+    K --> L[委托 / 成交 / 资金回报]
+    L --> E
+    M[策略回测页] --> N[HistoryDataService]
+    N --> O[BacktestService]
+    O --> P[收益曲线、回撤曲线、成交明细]
+```
+
+简单理解：后台负责“允许谁交易什么”，交易端负责“看行情和发请求”，C++ 核心负责“校验、
+风控和柜台通信”；回测是独立的只读链路，不会触发真实委托。
 
 ## 首次安装与构建
 
@@ -63,6 +83,12 @@ cmake --build build --target \
 ./runtime/start.sh
 ```
 
+看到下面的提示，说明 C++ 主链路已启动：
+
+```text
+QuantFabric services are running in real-trade mode.
+```
+
 历史行情和回测服务需要本机 ClickHouse 只读配置：
 
 ```bash
@@ -81,6 +107,16 @@ DISPLAY=:0 ./build/QtAdmin_0.1.0
 
 业务后台也可直接用浏览器访问：<http://127.0.0.1:19080/>。
 本地开发账号为 `admin / 123456`。
+
+### 启动后看什么
+
+| 页面 | 查看位置 | 能验证的内容 |
+| --- | --- | --- |
+| 交易工作台 | vn.py 窗口 | 左侧证券列表、实时行情、K 线、五档、资金、持仓、委托、成交 |
+| 快速委托 | 交易工作台右侧 | 选择当前证券后填写价格和数量，买入/卖出会经过 C++ 风控 |
+| 策略回测 | 交易工作台底部“策略回测” | 选择日期和均线参数，查看收益率、回撤、夏普和成交明细 |
+| 证券主数据 | 浏览器 `19080` | 查看版本、证券范围、买入权限、停牌和价格单位 |
+| 交易对账 | 后台左侧“交易对账” | 查看 ATP 资金、持仓、委托、成交和重连恢复记录 |
 
 停止全部运行服务：
 
